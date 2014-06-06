@@ -284,7 +284,7 @@ static void intel_iommu_mem_write(void *opaque, hwaddr addr,
     }
 }
 
-static IOMMUTLBEntry intel_iommu_translate(MemoryRegion *iommu, hwaddr addr)
+/*static IOMMUTLBEntry intel_iommu_translate(MemoryRegion *iommu, hwaddr addr)
 {
     return (IOMMUTLBEntry) {
         .target_as = &address_space_memory,
@@ -293,7 +293,7 @@ static IOMMUTLBEntry intel_iommu_translate(MemoryRegion *iommu, hwaddr addr)
         .addr_mask = TARGET_PAGE_MASK,
         .perm = IOMMU_RW,
     };
-}
+}*/
 
 static const VMStateDescription intel_iommu_vmstate = {
     .name ="iommu_intel",
@@ -321,13 +321,13 @@ static const MemoryRegionOps intel_iommu_mem_ops = {
     },
 };
 
-static MemoryRegionIOMMUOps intel_iommu_ops = {
+/*static MemoryRegionIOMMUOps intel_iommu_ops = {
     .translate = intel_iommu_translate,
-};
+};*/
 
 
 static Property iommu_properties[] = {
-    DEFINE_PROP_HEX32("version", intel_iommu_state, version, 0),
+    DEFINE_PROP_UINT32("version", intel_iommu_state, version, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 

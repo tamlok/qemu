@@ -98,7 +98,7 @@ typedef struct intel_iommu_state {
 
     dma_addr_t root;  /* Current root table pointer */
     bool extended;    /* Type of root table (extended or not) */
-    uint16_t iq_head; /* Current invalidation queue tail */
+    uint16_t iq_head; /* Current invalidation queue head */
     uint16_t iq_tail; /* Current invalidation queue tail */
     dma_addr_t iq;   /* Current invalidation queue (IQ) pointer */
     size_t iq_sz;    /* IQ Size in number of entries */
