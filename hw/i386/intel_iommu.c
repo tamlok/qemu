@@ -40,6 +40,12 @@ static inline void define_quad(intel_iommu_state *s, hwaddr addr, uint64_t val,
     *((uint64_t*)&s->w1cmask[addr]) = w1cmask;
 }
 
+static inline void define_quad_wo(intel_iommu_state *s, hwaddr addr,
+                                  uint64_t mask)
+{
+    *((uint64_t *)&s->womask[addr]) = mask;
+}
+
 static inline void define_long(intel_iommu_state *s, hwaddr addr, uint32_t val, 
                         uint32_t wmask, uint32_t w1cmask)
 {
@@ -48,9 +54,10 @@ static inline void define_long(intel_iommu_state *s, hwaddr addr, uint32_t val,
     *((uint32_t*)&s->w1cmask[addr]) = w1cmask;
 }
 
-static inline void define_long_wo(intel_iommu_state *s, hwaddr addr, uint32_t mask)
+static inline void define_long_wo(intel_iommu_state *s, hwaddr addr,
+                                  uint32_t mask)
 {
-    *((uint32_t*)&s->womask[addr]) = mask;
+    *((uint32_t *)&s->womask[addr]) = mask;
 }
 
 /* "External" set-operations */
@@ -347,48 +354,66 @@ static int intel_iommu_init(SysBusDevice *dev)
     /* b.0:2 = 2: Number of domains supported: 256 using 8 bit ids 
      * b.3   = 0: No advanced fault logging
      * b.4   = 0: No required write buffer flushing
-     * b.5   = 1: Protected low memory region supported
-     * b.6   = 1: Protected high memory region supported
+     * b.5   = 0: Protected low memory region not supported
+     * b.6   = 0: Protected high memory region not supported
+     * b.8:12 = 2: SAGAW(Supported Adjusted Guest Address Widths), 39-bit,
+     *             3-level page-table
+     * b.16:21 = 38: MGAW(Maximum Guest Address Width) = 38 + 1
+     * b.22 = 1: ZLR(Zero Length Read) supports zero length DMA read requests
+     *           to write-only pages
+     * b.24:33 = 32: FRO(Fault-recording Register offset)
+     * b.54 = 0: DWD(Write Draining), draining of write requests not supported
+     * b.55 = 0: DRD(Read Draining), draining of read requests not supported
      */
-    const uint64_t dmar_cap_reg_value = 0xc0000020e60262L;
+    const uint64_t dmar_cap_reg_value = 0x20e60202ULL;
+
+    /* b.1 = 0: QI(Queued Invalidation support) not supported
+     * b.2 = 0: DT(Device-TLB support)
+     * b.3 = 0: IR(Interrupt Remapping support) not supported
+     * b.4 = 0: EIM(Extended Interrupt Mode) not supported
+     * b.8:17 = 16: IRO(IOTLB Register Offset)
+     * b.20:23 = 15: MHMV(Maximum Handle Mask Value)
+     */
+    const uint64_t dmar_ecap_reg_value = 0xf01000ULL;
 
     /* Define registers with default values and bit semantics */
-    define_quad(s, DMAR_VER_REG, 0x10, 0, 0);  /* set MAX = 1, RO */
+    define_long(s, DMAR_VER_REG, 0x10UL, 0, 0);  /* set MAX = 1, RO */
     define_quad(s, DMAR_CAP_REG, dmar_cap_reg_value, 0, 0);
-    define_quad(s, DMAR_ECAP_REG, 0xf0101aL, 0, 0);
-    define_long(s, DMAR_GCMD_REG, 0, 0xffffffff, 0); 
-    define_long_wo(s, DMAR_GCMD_REG, 0xffc00000);
+    define_quad(s, DMAR_ECAP_REG, dmar_ecap_reg_value, 0, 0);
+    define_long(s, DMAR_GCMD_REG, 0, 0xff800000UL, 0); 
+    define_long_wo(s, DMAR_GCMD_REG, 0xff800000UL);
     define_long(s, DMAR_GSTS_REG, 0, 0, 0); /* All bits RO, default 0 */
-    define_quad(s, DMAR_RTADDR_REG, 0, 0xfffffffffffff000L, 0);
-    define_quad(s, DMAR_CCMD_REG, 0x800000000000000L, 0xe00000030000ffffL, 0);
-    define_long(s, DMAR_FSTS_REG, 0, 0, 0xfd);
-    define_long(s, DMAR_FECTL_REG, 0x80000000, 0x80000000, 0);
-    define_long(s, DMAR_FEDATA_REG, 0, 0xffffffff, 0); /* All bits RW */
-    define_long(s, DMAR_FEADDR_REG, 0, 0xfffffffc, 0); /* 31:2 RW */
-    define_long(s, DMAR_FEUADDR_REG, 0, 0xffffffff, 0); /* 31:2 RW */
+    define_quad(s, DMAR_RTADDR_REG, 0, 0xfffffffffffff000ULL, 0);
+    define_quad(s, DMAR_CCMD_REG, 0, 0xe0000003ffffffffULL, 0);
+    define_quad_wo(s, DMAR_CCMD_REG, 0x3ffff0000ULL);
+    define_long(s, DMAR_FSTS_REG, 0, 0, 0xfdUL);
+    define_long(s, DMAR_FECTL_REG, 0x80000000UL, 0x80000000UL, 0);
+    define_long(s, DMAR_FEDATA_REG, 0, 0xffffffffUL, 0); /* All bits RW */
+    define_long(s, DMAR_FEADDR_REG, 0, 0xfffffffcUL, 0); /* 31:2 RW */
+    define_long(s, DMAR_FEUADDR_REG, 0, 0xffffffffUL, 0); /* 31:0 RW */
 
-    define_quad(s, DMAR_AFLOG_REG, 0, 0xffffffffffffff00L, 0);
-    define_long(s, DMAR_PMEN_REG, 0, 0x80000000, 0);
+    define_quad(s, DMAR_AFLOG_REG, 0, 0xffffffffffffff00ULL, 0);
+    define_long(s, DMAR_PMEN_REG, 0, 0x80000000UL, 0);
     /* TBD: The definition of these are dynamic:
      * DMAR_PLMBASE_REG, DMAR_PLMLIMIT_REG, DMAR_PHMBASE_REG, DMAR_PHMLIMIT_REG
      */
-    define_quad(s, DMAR_IQH_REG, 0, 0, 0);  /* Bits 18:4 (0x3fff0) is RO, rest is RsvdZ */
-    define_quad(s, DMAR_IQT_REG, 0, 0x3fff0, 0);
-    define_quad(s, DMAR_IQA_REG, 0, 0xfffffffffffff000L, 0);
-    define_quad(s, DMAR_ICS_REG, 0, 0, 0x1); /* Bit 0 is RW1CS - rest is RsvdZ */
-    define_long(s, DMAR_IECTL_REG, 0x80000000, 0x80000000, 0); /* b.31 is RW, b.30 RO, rest: RsvdZ */
-    define_long(s, DMAR_IEDATA_REG, 0, 0xffffffff, 0);
-    define_long(s, DMAR_IEADDR_REG, 0, 0xfffffffc, 0);
-    define_long(s, DMAR_IEUADDR_REG, 0, 0xffffffff, 0);
-    define_quad(s, DMAR_IRTA_REG, 0, 0xfffffffffffff80fL, 0);
-    define_quad(s, DMAR_PQH_REG, 0, 0x3fff0L, 0);
-    define_quad(s, DMAR_PQT_REG, 0, 0x3fff0L, 0);
-    define_quad(s, DMAR_PQA_REG, 0, 0xfffffffffffff007L, 0);
-    define_long(s, DMAR_PRS_REG, 0, 0, 0x1);
-    define_long(s, DMAR_PECTL_REG, 0, 0x80000000, 0);
-    define_long(s, DMAR_PEDATA_REG, 0, 0xffffffff, 0);
-    define_long(s, DMAR_PEADDR_REG, 0, 0xfffffffc, 0);
-    define_long(s, DMAR_PEUADDR_REG, 0, 0xffffffff, 0);
+    define_quad(s, DMAR_IQH_REG, 0, 0, 0);  /* Bits 18:4 (0x7fff0) is RO, rest is RsvdZ */
+    define_quad(s, DMAR_IQT_REG, 0, 0x7fff0ULL, 0);
+    define_quad(s, DMAR_IQA_REG, 0, 0xfffffffffffff007ULL, 0);
+    define_long(s, DMAR_ICS_REG, 0, 0, 0x1UL); /* Bit 0 is RW1CS - rest is RsvdZ */
+    define_long(s, DMAR_IECTL_REG, 0x80000000UL, 0x80000000UL, 0); /* b.31 is RW, b.30 RO, rest: RsvdZ */
+    define_long(s, DMAR_IEDATA_REG, 0, 0xffffffffUL, 0);
+    define_long(s, DMAR_IEADDR_REG, 0, 0xfffffffcUL, 0);
+    define_long(s, DMAR_IEUADDR_REG, 0, 0xffffffffUL, 0);
+    define_quad(s, DMAR_IRTA_REG, 0, 0xfffffffffffff80fULL, 0);
+    define_quad(s, DMAR_PQH_REG, 0, 0x7fff0ULL, 0);
+    define_quad(s, DMAR_PQT_REG, 0, 0x7fff0ULL, 0);
+    define_quad(s, DMAR_PQA_REG, 0, 0xfffffffffffff007ULL, 0);
+    define_long(s, DMAR_PRS_REG, 0, 0, 0x1UL);
+    define_long(s, DMAR_PECTL_REG, 0x80000000UL, 0x80000000UL, 0);
+    define_long(s, DMAR_PEDATA_REG, 0, 0xffffffffUL, 0);
+    define_long(s, DMAR_PEADDR_REG, 0, 0xfffffffcUL, 0);
+    define_long(s, DMAR_PEUADDR_REG, 0, 0xffffffffUL, 0);
     return 0;
 }
 

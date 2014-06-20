@@ -34,7 +34,7 @@
      OBJECT_CHECK(intel_iommu_state, (obj), TYPE_INTEL_IOMMU_DEVICE)
 
 /* DMAR Hardware Unit Definition address (IOMMU unit) set i bios */
-#define Q35_HOST_BRIDGE_IOMMU_ADDR 0xfed90000
+#define Q35_HOST_BRIDGE_IOMMU_ADDR 0xfed90000ULL
 
 /*
  * Intel IOMMU register specification per version 1.0 public spec.
@@ -62,7 +62,7 @@
 #define DMAR_IQT_REG	0x88	/* Invalidation queue tail register */
 #define DMAR_IQ_SHIFT	4	/* Invalidation queue head/tail shift */
 #define DMAR_IQA_REG	0x90	/* Invalidation queue addr register */
-#define DMAR_ICS_REG	0x98	/* Invalidation complete status register */
+#define DMAR_ICS_REG	0x9c	/* Invalidation complete status register */
 #define DMAR_IRTA_REG	0xb8    /* Interrupt remapping table addr register */
 
 /* From Vt-d 2.2 spec */
@@ -73,7 +73,7 @@
 #define DMAR_PQH_REG    0xc0    /* Page request queue head register */
 #define DMAR_PQT_REG    0xc8    /* Page request queue tail register*/
 #define DMAR_PQA_REG    0xd0    /* Page request queue address register */
-#define DMAR_PRS_REG    0xd8    /* Page request status register */
+#define DMAR_PRS_REG    0xdc    /* Page request status register */
 #define DMAR_PECTL_REG  0xe0    /* Page request event control register */
 #define DMAR_PEDATA_REG 0xe4    /* Page request event data register */
 #define DMAR_PEADDR_REG 0xe8    /* Page request event address register */
