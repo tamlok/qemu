@@ -1,5 +1,5 @@
 /*
- * QEMU emulation of an Intel IOMMU 
+ * QEMU emulation of an Intel IOMMU
  *   (DMA Remapping device)
  *
  * This library is free software; you can redistribute it and/or
@@ -40,30 +40,30 @@
  * Intel IOMMU register specification per version 1.0 public spec.
  */
 
-#define	DMAR_VER_REG	0x0	/* Arch version supported by this IOMMU */
-#define	DMAR_CAP_REG	0x8	/* Hardware supported capabilities */
-#define	DMAR_ECAP_REG	0x10	/* Extended capabilities supported */
-#define	DMAR_GCMD_REG	0x18	/* Global command register */
-#define	DMAR_GSTS_REG	0x1c	/* Global status register */
-#define	DMAR_RTADDR_REG	0x20	/* Root entry table */
-#define	DMAR_CCMD_REG	0x28	/* Context command reg */
-#define	DMAR_FSTS_REG	0x34	/* Fault Status register */
-#define	DMAR_FECTL_REG	0x38	/* Fault control register */
-#define	DMAR_FEDATA_REG	0x3c	/* Fault event interrupt data register */
-#define	DMAR_FEADDR_REG	0x40	/* Fault event interrupt addr register */
-#define	DMAR_FEUADDR_REG 0x44	/* Upper address register */
-#define	DMAR_AFLOG_REG	0x58	/* Advanced Fault control */
-#define	DMAR_PMEN_REG	0x64	/* Enable Protected Memory Region */
-#define	DMAR_PLMBASE_REG 0x68	/* PMRR Low addr */
-#define	DMAR_PLMLIMIT_REG 0x6c	/* PMRR low limit */
-#define	DMAR_PHMBASE_REG 0x70	/* pmrr high base addr */
-#define	DMAR_PHMLIMIT_REG 0x78	/* pmrr high limit */
-#define DMAR_IQH_REG	0x80	/* Invalidation queue head register */
-#define DMAR_IQT_REG	0x88	/* Invalidation queue tail register */
-#define DMAR_IQ_SHIFT	4	/* Invalidation queue head/tail shift */
-#define DMAR_IQA_REG	0x90	/* Invalidation queue addr register */
-#define DMAR_ICS_REG	0x9c	/* Invalidation complete status register */
-#define DMAR_IRTA_REG	0xb8    /* Interrupt remapping table addr register */
+#define DMAR_VER_REG    0x0 /* Arch version supported by this IOMMU */
+#define DMAR_CAP_REG    0x8 /* Hardware supported capabilities */
+#define DMAR_ECAP_REG   0x10    /* Extended capabilities supported */
+#define DMAR_GCMD_REG   0x18    /* Global command register */
+#define DMAR_GSTS_REG   0x1c    /* Global status register */
+#define DMAR_RTADDR_REG 0x20    /* Root entry table */
+#define DMAR_CCMD_REG   0x28  /* Context command reg */
+#define DMAR_FSTS_REG   0x34  /* Fault Status register */
+#define DMAR_FECTL_REG  0x38 /* Fault control register */
+#define DMAR_FEDATA_REG 0x3c    /* Fault event interrupt data register */
+#define DMAR_FEADDR_REG 0x40    /* Fault event interrupt addr register */
+#define DMAR_FEUADDR_REG    0x44   /* Upper address register */
+#define DMAR_AFLOG_REG  0x58 /* Advanced Fault control */
+#define DMAR_PMEN_REG   0x64  /* Enable Protected Memory Region */
+#define DMAR_PLMBASE_REG    0x68    /* PMRR Low addr */
+#define DMAR_PLMLIMIT_REG 0x6c  /* PMRR low limit */
+#define DMAR_PHMBASE_REG 0x70   /* pmrr high base addr */
+#define DMAR_PHMLIMIT_REG 0x78  /* pmrr high limit */
+#define DMAR_IQH_REG    0x80   /* Invalidation queue head register */
+#define DMAR_IQT_REG    0x88   /* Invalidation queue tail register */
+#define DMAR_IQ_SHIFT   4 /* Invalidation queue head/tail shift */
+#define DMAR_IQA_REG    0x90   /* Invalidation queue addr register */
+#define DMAR_ICS_REG    0x9c   /* Invalidation complete status register */
+#define DMAR_IRTA_REG   0xb8    /* Interrupt remapping table addr register */
 
 /* From Vt-d 2.2 spec */
 #define DMAR_IECTL_REG  0xa0    /* Invalidation event control register */
@@ -107,8 +107,7 @@ typedef struct intel_iommu_state {
 
 
 /* An invalidate descriptor */
-typedef struct intel_iommu_inv_desc
-{
+typedef struct intel_iommu_inv_desc {
     uint64_t lower;
     uint64_t upper;
 } intel_iommu_inv_desc;
@@ -134,22 +133,22 @@ typedef struct intel_iommu_inv_desc
 #define DMA_TLB_IAIG(val) (((val) >> 57) & 7)
 #define DMA_TLB_READ_DRAIN (((uint64_t)1) << 49)
 #define DMA_TLB_WRITE_DRAIN (((uint64_t)1) << 48)
-#define DMA_TLB_DID(id)	(((uint64_t)((id) & 0xffff)) << 32)
+#define DMA_TLB_DID(id) (((uint64_t)((id) & 0xffff)) << 32)
 #define DMA_TLB_IVT (((uint64_t)1) << 63)
 #define DMA_TLB_IH_NONLEAF (((uint64_t)1) << 6)
 #define DMA_TLB_MAX_SIZE (0x3f)
 
 /* INVALID_DESC */
 #define DMA_CCMD_INVL_GRANU_OFFSET  61
-#define DMA_ID_TLB_GLOBAL_FLUSH	(((uint64_t)1) << 3)
-#define DMA_ID_TLB_DSI_FLUSH	(((uint64_t)2) << 3)
-#define DMA_ID_TLB_PSI_FLUSH	(((uint64_t)3) << 3)
-#define DMA_ID_TLB_READ_DRAIN	(((uint64_t)1) << 7)
-#define DMA_ID_TLB_WRITE_DRAIN	(((uint64_t)1) << 6)
-#define DMA_ID_TLB_DID(id)	(((uint64_t)((id & 0xffff) << 16)))
-#define DMA_ID_TLB_IH_NONLEAF	(((uint64_t)1) << 6)
-#define DMA_ID_TLB_ADDR(addr)	(addr)
-#define DMA_ID_TLB_ADDR_MASK(mask)	(mask)
+#define DMA_ID_TLB_GLOBAL_FLUSH (((uint64_t)1) << 3)
+#define DMA_ID_TLB_DSI_FLUSH    (((uint64_t)2) << 3)
+#define DMA_ID_TLB_PSI_FLUSH    (((uint64_t)3) << 3)
+#define DMA_ID_TLB_READ_DRAIN   (((uint64_t)1) << 7)
+#define DMA_ID_TLB_WRITE_DRAIN  (((uint64_t)1) << 6)
+#define DMA_ID_TLB_DID(id)  (((uint64_t)((id & 0xffff) << 16)))
+#define DMA_ID_TLB_IH_NONLEAF   (((uint64_t)1) << 6)
+#define DMA_ID_TLB_ADDR(addr)   (addr)
+#define DMA_ID_TLB_ADDR_MASK(mask)  (mask)
 
 /* PMEN_REG */
 #define DMA_PMEN_EPM (((uint32_t)1)<<31)

@@ -1,5 +1,5 @@
 /*
- * QEMU emulation of an Intel IOMMU 
+ * QEMU emulation of an Intel IOMMU
  *   (DMA Remapping device)
  *
  * Copyright (c) 2013 Knut Omang, Oracle <knut.omang@oracle.com>
@@ -25,19 +25,20 @@
 #define DEBUG_INTEL_IOMMU
 #ifdef DEBUG_INTEL_IOMMU
 #define D(fmt, ...) \
-    do { fprintf(stderr, "%s, %s: " fmt "\n", __FILE__, __func__, ## __VA_ARGS__); } while (0)
+    do { fprintf(stderr, "%s, %s: " fmt "\n", __FILE__, __func__, \
+                 ## __VA_ARGS__); } while (0)
 #else
 #define D(fmt, ...) \
     do { } while (0)
 #endif
 
 
-static inline void define_quad(intel_iommu_state *s, hwaddr addr, uint64_t val, 
+static inline void define_quad(intel_iommu_state *s, hwaddr addr, uint64_t val,
                         uint64_t wmask, uint64_t w1cmask)
 {
-    *((uint64_t*)&s->csr[addr]) = val;
-    *((uint64_t*)&s->wmask[addr]) = wmask;
-    *((uint64_t*)&s->w1cmask[addr]) = w1cmask;
+    *((uint64_t *)&s->csr[addr]) = val;
+    *((uint64_t *)&s->wmask[addr]) = wmask;
+    *((uint64_t *)&s->w1cmask[addr]) = w1cmask;
 }
 
 static inline void define_quad_wo(intel_iommu_state *s, hwaddr addr,
@@ -46,12 +47,12 @@ static inline void define_quad_wo(intel_iommu_state *s, hwaddr addr,
     *((uint64_t *)&s->womask[addr]) = mask;
 }
 
-static inline void define_long(intel_iommu_state *s, hwaddr addr, uint32_t val, 
+static inline void define_long(intel_iommu_state *s, hwaddr addr, uint32_t val,
                         uint32_t wmask, uint32_t w1cmask)
 {
-    *((uint32_t*)&s->csr[addr]) = val;
-    *((uint32_t*)&s->wmask[addr]) = wmask;
-    *((uint32_t*)&s->w1cmask[addr]) = w1cmask;
+    *((uint32_t *)&s->csr[addr]) = val;
+    *((uint32_t *)&s->wmask[addr]) = wmask;
+    *((uint32_t *)&s->w1cmask[addr]) = w1cmask;
 }
 
 static inline void define_long_wo(intel_iommu_state *s, hwaddr addr,
@@ -63,55 +64,56 @@ static inline void define_long_wo(intel_iommu_state *s, hwaddr addr,
 /* "External" set-operations */
 static inline void set_quad(intel_iommu_state *s, hwaddr addr, uint64_t val)
 {
-    uint64_t oldval = *((uint64_t*)&s->csr[addr]);
-    uint64_t wmask = *((uint64_t*)&s->wmask[addr]);
-    uint64_t w1cmask = *((uint64_t*)&s->w1cmask[addr]);
-    *((uint64_t*)&s->csr[addr]) = 
+    uint64_t oldval = *((uint64_t *)&s->csr[addr]);
+    uint64_t wmask = *((uint64_t *)&s->wmask[addr]);
+    uint64_t w1cmask = *((uint64_t *)&s->w1cmask[addr]);
+    *((uint64_t *)&s->csr[addr]) =
         ((oldval & ~wmask) | (val & wmask)) & ~(w1cmask & val);
 }
 
 static inline void set_long(intel_iommu_state *s, hwaddr addr, uint32_t val)
 {
-    uint32_t oldval = *((uint32_t*)&s->csr[addr]);
-    uint32_t wmask = *((uint32_t*)&s->wmask[addr]);
-    uint32_t w1cmask = *((uint32_t*)&s->w1cmask[addr]);
-    *((uint32_t*)&s->csr[addr]) = 
+    uint32_t oldval = *((uint32_t *)&s->csr[addr]);
+    uint32_t wmask = *((uint32_t *)&s->wmask[addr]);
+    uint32_t w1cmask = *((uint32_t *)&s->w1cmask[addr]);
+    *((uint32_t *)&s->csr[addr]) =
         ((oldval & ~wmask) | (val & wmask)) & ~(w1cmask & val);
 }
 
 static inline uint64_t get_quad(intel_iommu_state *s, hwaddr addr)
 {
-    uint64_t val = *((uint64_t*)&s->csr[addr]);
-    uint64_t womask = *((uint64_t*)&s->womask[addr]);
+    uint64_t val = *((uint64_t *)&s->csr[addr]);
+    uint64_t womask = *((uint64_t *)&s->womask[addr]);
     return val & ~womask;
 }
 
 static inline uint32_t get_long(intel_iommu_state *s, hwaddr addr)
 {
-    uint32_t val = *((uint32_t*)&s->csr[addr]);
-    uint32_t womask = *((uint32_t*)&s->womask[addr]);
+    uint32_t val = *((uint32_t *)&s->csr[addr]);
+    uint32_t womask = *((uint32_t *)&s->womask[addr]);
     return val & ~womask;
 }
 
-static inline uint32_t set_mask_long(intel_iommu_state *s, hwaddr addr, uint32_t mask)
+static inline uint32_t set_mask_long(intel_iommu_state *s, hwaddr addr,
+                                     uint32_t mask)
 {
-    uint32_t oldval = *((uint32_t*)&s->csr[addr]);
+    uint32_t oldval = *((uint32_t *)&s->csr[addr]);
     uint32_t val = oldval | mask;
-    *((uint32_t*)&s->csr[addr]) = val;
+    *((uint32_t *)&s->csr[addr]) = val;
     return val;
 }
 
-static void iommu_inv_queue_setup(intel_iommu_state *s) 
+static void iommu_inv_queue_setup(intel_iommu_state *s)
 {
     uint64_t tail_val;
-    s->iq = *((uint64_t*)&s->csr[DMAR_IQA_REG]);
+    s->iq = *((uint64_t *)&s->csr[DMAR_IQA_REG]);
     s->iq_sz = 0x100 << (s->iq & 0x7);  /* 256 entries per page */
     s->iq &= ~0x7;
     s->iq_enable = true;
 
     /* Init head pointers */
-    tail_val = *((uint64_t*)&s->csr[DMAR_IQT_REG]);
-    *((uint64_t*)&s->csr[DMAR_IQH_REG]) = tail_val;
+    tail_val = *((uint64_t *)&s->csr[DMAR_IQT_REG]);
+    *((uint64_t *)&s->csr[DMAR_IQH_REG]) = tail_val;
     s->iq_head = s->iq_tail = (tail_val >> 4) & 0x7fff;
     D(" -- address: 0x%lx size 0x%lx", s->iq, s->iq_sz);
 }
@@ -121,20 +123,21 @@ static void handle_gcmd_qie(intel_iommu_state *s, bool en)
 {
     D("Queued Invalidation Enable %s", (en ? "on" : "off"));
 
-    if (en)
+    if (en) {
         iommu_inv_queue_setup(s);
+    }
 
     /* Ok - report back to driver */
     set_mask_long(s, DMAR_GSTS_REG, DMA_GSTS_QIES);
 }
 
 
-static void iommu_root_table_setup(intel_iommu_state *s) 
+static void iommu_root_table_setup(intel_iommu_state *s)
 {
-    s->root = *((uint64_t*)&s->csr[DMAR_RTADDR_REG]);
+    s->root = *((uint64_t *)&s->csr[DMAR_RTADDR_REG]);
     s->extended = (s->root >> 11) & 1;
     s->root &= ~0xfff;
-    D(" -- address: 0x%lx %s", s->root, (s->extended ? "(Extended)" : "")); 
+    D(" -- address: 0x%lx %s", s->root, (s->extended ? "(Extended)" : ""));
 }
 
 
@@ -145,9 +148,11 @@ static int handle_invalidate(intel_iommu_state *s, uint16_t i)
 {
     intel_iommu_inv_desc entry;
     uint8_t type;
-    dma_memory_read(&address_space_memory, s->iq + sizeof(entry) * i, &entry, sizeof(entry));
+    dma_memory_read(&address_space_memory, s->iq + sizeof(entry) * i, &entry,
+                    sizeof(entry));
     type = entry.lower & 0xf;
-    D(" Processing invalidate request %d - desc: %016lx.%016lx", i, entry.upper, entry.lower);    
+    D(" Processing invalidate request %d - desc: %016lx.%016lx", i,
+      entry.upper, entry.lower);
     switch (type) {
     case CONTEXT_CACHE_INV_DESC:
         D("Context-cache Invalidate");
@@ -157,8 +162,10 @@ static int handle_invalidate(intel_iommu_state *s, uint16_t i)
         break;
     case INV_WAIT_DESC:
         D("Invalidate Wait");
-        if (status_write(entry.lower))
-            dma_memory_write(&address_space_memory, entry.upper, (uint8_t*)&entry.lower + 4, 4);
+        if (status_write(entry.lower)) {
+            dma_memory_write(&address_space_memory, entry.upper,
+                             (uint8_t *)&entry.lower + 4, 4);
+        }
         break;
     default:
         D(" - not impl - ");
@@ -172,24 +179,28 @@ static void handle_iqt_write(intel_iommu_state *s, uint64_t val)
     s->iq_tail = (val >> 4) & 0x7fff;
     D("Write to IQT_REG new tail = %d", s->iq_tail);
 
-    if (!s->iq_enable) return;
+    if (!s->iq_enable) {
+        return;
+    }
 
     /* Process the invalidation queue */
     while (s->iq_head != s->iq_tail) {
         handle_invalidate(s, s->iq_head++);
-        if (s->iq_head == s->iq_sz)
+        if (s->iq_head == s->iq_sz) {
             s->iq_head = 0;
+        }
     }
-    *((uint64_t*)&s->csr[DMAR_IQH_REG]) = s->iq_head << 4;
+    *((uint64_t *)&s->csr[DMAR_IQH_REG]) = s->iq_head << 4;
 }
 
 
 static void handle_gcmd_srtp(intel_iommu_state *s, bool en)
 {
     D("Set Root Table Pointer %s", (en ? "on" : "off"));
-    
-    if (en) 
+
+    if (en) {
         iommu_root_table_setup(s);
+    }
 
     /* Ok - report back to driver */
     set_mask_long(s, DMAR_GSTS_REG, DMA_GSTS_RTPS);
@@ -200,8 +211,6 @@ static void handle_gcmd_te(intel_iommu_state *s, bool en)
 {
     D("Translation Enable %s", (en ? "on" : "off"));
 
-    
-
     /* Ok - report back to driver */
     set_mask_long(s, DMAR_GSTS_REG, DMA_GSTS_TES);
 }
@@ -209,7 +218,7 @@ static void handle_gcmd_te(intel_iommu_state *s, bool en)
 
 static void handle_gcmd_write(intel_iommu_state *s, uint32_t val)
 {
-    uint32_t oldval = *((uint32_t*)&s->csr[DMAR_GCMD_REG]);
+    uint32_t oldval = *((uint32_t *)&s->csr[DMAR_GCMD_REG]);
     uint32_t changed = oldval ^ val;
     if (changed & DMA_GCMD_TE) {
         handle_gcmd_te(s, val & DMA_GCMD_TE);
@@ -221,7 +230,8 @@ static void handle_gcmd_write(intel_iommu_state *s, uint32_t val)
         D("Set Fault Log %s", (val & DMA_GCMD_SFL ? "on" : "off"));
     }
     if (changed & DMA_GCMD_EAFL) {
-        D("Enable Advanced Fault Logging %s", (val & DMA_GCMD_EAFL ? "on" : "off"));
+        D("Enable Advanced Fault Logging %s",
+          (val & DMA_GCMD_EAFL ? "on" : "off"));
     }
     if (changed & DMA_GCMD_WBF) {
         D("Write Buffer Flush %s", (val & DMA_GCMD_WBF ? "on" : "off"));
@@ -230,13 +240,16 @@ static void handle_gcmd_write(intel_iommu_state *s, uint32_t val)
         handle_gcmd_qie(s, val & DMA_GCMD_QIE);
     }
     if (changed & DMA_GCMD_SIRTP) {
-        D("Interrupt Remapping Enable %s", (val & DMA_GCMD_SIRTP ? "on" : "off"));
+        D("Interrupt Remapping Enable %s",
+          (val & DMA_GCMD_SIRTP ? "on" : "off"));
     }
     if (changed & DMA_GCMD_IRE) {
-        D("Set Interrupt Remapping Table Pointer %s", (val & DMA_GCMD_IRE ? "on" : "off"));
+        D("Set Interrupt Remapping Table Pointer %s",
+          (val & DMA_GCMD_IRE ? "on" : "off"));
     }
     if (changed & DMA_GCMD_CFI) {
-        D("Compatibility Format Interrupt %s", (val & DMA_GCMD_CFI ? "on" : "off"));
+        D("Compatibility Format Interrupt %s",
+          (val & DMA_GCMD_CFI ? "on" : "off"));
     }
 }
 
@@ -250,12 +263,13 @@ static uint64_t intel_iommu_mem_read(void *opaque, hwaddr addr, unsigned size)
         return (uint64_t)-1;
     }
 
-    if (size == 4)
+    if (size == 4) {
         val = get_long(s, addr);
-    else if (size == 8)
+    } else if (size == 8) {
         val = get_quad(s, addr);
-    else
+    } else {
         val = (uint64_t)-1;
+    }
 
     D(" addr %lx size %d val %lx", addr, size, val);
     return val;
@@ -303,11 +317,11 @@ static void intel_iommu_mem_write(void *opaque, hwaddr addr,
 }*/
 
 static const VMStateDescription intel_iommu_vmstate = {
-    .name ="iommu_intel",
+    .name = "iommu_intel",
     .version_id = 1,
     .minimum_version_id = 1,
     .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT8_ARRAY(csr, intel_iommu_state, DMAR_REG_SIZE),
         VMSTATE_END_OF_LIST()
     }
@@ -347,11 +361,11 @@ static void intel_iommu_reset(DeviceState *d)
 static int intel_iommu_init(SysBusDevice *dev)
 {
     intel_iommu_state *s = INTEL_IOMMU_DEVICE(dev);
-    memory_region_init_io(&s->csrmem, OBJECT(s), &intel_iommu_mem_ops, s, "intel_iommu",
-                          DMAR_REG_SIZE);
+    memory_region_init_io(&s->csrmem, OBJECT(s), &intel_iommu_mem_ops, s,
+                          "intel_iommu", DMAR_REG_SIZE);
     D(" ");
 
-    /* b.0:2 = 2: Number of domains supported: 256 using 8 bit ids 
+    /* b.0:2 = 2: Number of domains supported: 256 using 8 bit ids
      * b.3   = 0: No advanced fault logging
      * b.4   = 0: No required write buffer flushing
      * b.5   = 0: Protected low memory region not supported
@@ -380,7 +394,7 @@ static int intel_iommu_init(SysBusDevice *dev)
     define_long(s, DMAR_VER_REG, 0x10UL, 0, 0);  /* set MAX = 1, RO */
     define_quad(s, DMAR_CAP_REG, dmar_cap_reg_value, 0, 0);
     define_quad(s, DMAR_ECAP_REG, dmar_ecap_reg_value, 0, 0);
-    define_long(s, DMAR_GCMD_REG, 0, 0xff800000UL, 0); 
+    define_long(s, DMAR_GCMD_REG, 0, 0xff800000UL, 0);
     define_long_wo(s, DMAR_GCMD_REG, 0xff800000UL);
     define_long(s, DMAR_GSTS_REG, 0, 0, 0); /* All bits RO, default 0 */
     define_quad(s, DMAR_RTADDR_REG, 0, 0xfffffffffffff000ULL, 0);
@@ -397,11 +411,19 @@ static int intel_iommu_init(SysBusDevice *dev)
     /* TBD: The definition of these are dynamic:
      * DMAR_PLMBASE_REG, DMAR_PLMLIMIT_REG, DMAR_PHMBASE_REG, DMAR_PHMLIMIT_REG
      */
-    define_quad(s, DMAR_IQH_REG, 0, 0, 0);  /* Bits 18:4 (0x7fff0) is RO, rest is RsvdZ */
+
+    /* Bits 18:4 (0x7fff0) is RO, rest is RsvdZ */
+    define_quad(s, DMAR_IQH_REG, 0, 0, 0);
+
     define_quad(s, DMAR_IQT_REG, 0, 0x7fff0ULL, 0);
     define_quad(s, DMAR_IQA_REG, 0, 0xfffffffffffff007ULL, 0);
-    define_long(s, DMAR_ICS_REG, 0, 0, 0x1UL); /* Bit 0 is RW1CS - rest is RsvdZ */
-    define_long(s, DMAR_IECTL_REG, 0x80000000UL, 0x80000000UL, 0); /* b.31 is RW, b.30 RO, rest: RsvdZ */
+
+    /* Bit 0 is RW1CS - rest is RsvdZ */
+    define_long(s, DMAR_ICS_REG, 0, 0, 0x1UL);
+
+    /* b.31 is RW, b.30 RO, rest: RsvdZ */
+    define_long(s, DMAR_IECTL_REG, 0x80000000UL, 0x80000000UL, 0);
+
     define_long(s, DMAR_IEDATA_REG, 0, 0xffffffffUL, 0);
     define_long(s, DMAR_IEADDR_REG, 0, 0xfffffffcUL, 0);
     define_long(s, DMAR_IEUADDR_REG, 0, 0xffffffffUL, 0);
