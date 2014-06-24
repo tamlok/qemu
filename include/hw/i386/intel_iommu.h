@@ -42,28 +42,39 @@
 
 #define DMAR_VER_REG    0x0 /* Arch version supported by this IOMMU */
 #define DMAR_CAP_REG    0x8 /* Hardware supported capabilities */
+#define DMAR_CAP_REG_HI 0xc /* High 32-bit of DMAR_CAP_REG */
 #define DMAR_ECAP_REG   0x10    /* Extended capabilities supported */
+#define DMAR_ECAP_REG_HI    0X14
 #define DMAR_GCMD_REG   0x18    /* Global command register */
 #define DMAR_GSTS_REG   0x1c    /* Global status register */
 #define DMAR_RTADDR_REG 0x20    /* Root entry table */
+#define DMAR_RTADDR_REG_HI  0X24
 #define DMAR_CCMD_REG   0x28  /* Context command reg */
+#define DMAR_CCMD_REG_HI    0x2c
 #define DMAR_FSTS_REG   0x34  /* Fault Status register */
 #define DMAR_FECTL_REG  0x38 /* Fault control register */
 #define DMAR_FEDATA_REG 0x3c    /* Fault event interrupt data register */
 #define DMAR_FEADDR_REG 0x40    /* Fault event interrupt addr register */
 #define DMAR_FEUADDR_REG    0x44   /* Upper address register */
 #define DMAR_AFLOG_REG  0x58 /* Advanced Fault control */
+#define DMAR_AFLOG_REG_HI   0X5c
 #define DMAR_PMEN_REG   0x64  /* Enable Protected Memory Region */
 #define DMAR_PLMBASE_REG    0x68    /* PMRR Low addr */
 #define DMAR_PLMLIMIT_REG 0x6c  /* PMRR low limit */
 #define DMAR_PHMBASE_REG 0x70   /* pmrr high base addr */
+#define DMAR_PHMBASE_REG_HI 0X74
 #define DMAR_PHMLIMIT_REG 0x78  /* pmrr high limit */
+#define DMAR_PHMLIMIT_REG_HI 0x7c
 #define DMAR_IQH_REG    0x80   /* Invalidation queue head register */
+#define DMAR_IQH_REG_HI 0X84
 #define DMAR_IQT_REG    0x88   /* Invalidation queue tail register */
+#define DMAR_IQT_REG_HI 0X8c
 #define DMAR_IQ_SHIFT   4 /* Invalidation queue head/tail shift */
 #define DMAR_IQA_REG    0x90   /* Invalidation queue addr register */
+#define DMAR_IQA_REG_HI 0x94
 #define DMAR_ICS_REG    0x9c   /* Invalidation complete status register */
 #define DMAR_IRTA_REG   0xb8    /* Interrupt remapping table addr register */
+#define DMAR_IRTA_REG_HI    0xbc
 
 /* From Vt-d 2.2 spec */
 #define DMAR_IECTL_REG  0xa0    /* Invalidation event control register */
@@ -71,21 +82,28 @@
 #define DMAR_IEADDR_REG 0xa8    /* Invalidation event address register */
 #define DMAR_IEUADDR_REG 0xac    /* Invalidation event address register */
 #define DMAR_PQH_REG    0xc0    /* Page request queue head register */
+#define DMAR_PQH_REG_HI 0xc4
 #define DMAR_PQT_REG    0xc8    /* Page request queue tail register*/
+#define DMAR_PQT_REG_HI     0xcc
 #define DMAR_PQA_REG    0xd0    /* Page request queue address register */
+#define DMAR_PQA_REG_HI 0xd4
 #define DMAR_PRS_REG    0xdc    /* Page request status register */
 #define DMAR_PECTL_REG  0xe0    /* Page request event control register */
 #define DMAR_PEDATA_REG 0xe4    /* Page request event data register */
 #define DMAR_PEADDR_REG 0xe8    /* Page request event address register */
 #define DMAR_PEUADDR_REG  0xec  /* Page event upper address register */
 #define DMAR_MTRRCAP_REG 0x100  /* MTRR capability register */
+#define DMAR_MTRRCAP_REG_HI 0x104
 #define DMAR_MTRRDEF_REG 0x108  /* MTRR default type register */
+#define DMAR_MTRRDEF_REG_HI 0x10c
 
 /* IOTLB */
 #define DMAR_IOTLB_REG_OFFSET 0xf0  /* Offset to the IOTLB registers */
 #define DMAR_IVA_REG DMAR_IOTLB_REG_OFFSET  /* Invalidate Address Register */
+#define DMAR_IVA_REG_HI (DMAR_IVA_REG + 4)
 /* IOTLB Invalidate Register */
 #define DMAR_IOTLB_REG (DMAR_IOTLB_REG_OFFSET + 0x8)
+#define DMAR_IOTLB_REG_HI (DMAR_IOTLB_REG + 4)
 
 /* FRCD */
 #define DMAR_FRCD_REG_OFFSET 0x220 /* Offset to the Fault Recording Registers */

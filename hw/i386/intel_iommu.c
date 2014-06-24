@@ -49,13 +49,6 @@ static const vtd_reg_desc reserved_regs[] = {
     { REG_DESC(0xd8, 32) },
 };
 
-/* Software may access a 64-bit register by accessing two 32-bit registers,
- * first the lower half and then the higher half. Use former_size to indicate
- * how many bytes are read for now to finish accessing the whole register.
- */
-static int former_size;
-static uint64_t former_value;
-
 static bool is_reserved(uint32_t offset, int size)
 {
     int i;
@@ -101,7 +94,7 @@ static inline void define_long_wo(intel_iommu_state *s, hwaddr addr,
     *((uint32_t *)&s->womask[addr]) = mask;
 }
 
-/* "External" set-operations */
+/* "External" get/set operations */
 static inline void set_quad(intel_iommu_state *s, hwaddr addr, uint64_t val)
 {
     uint64_t oldval = *((uint64_t *)&s->csr[addr]);
@@ -127,12 +120,27 @@ static inline uint64_t get_quad(intel_iommu_state *s, hwaddr addr)
     return val & ~womask;
 }
 
+
 static inline uint32_t get_long(intel_iommu_state *s, hwaddr addr)
 {
     uint32_t val = *((uint32_t *)&s->csr[addr]);
     uint32_t womask = *((uint32_t *)&s->womask[addr]);
     return val & ~womask;
 }
+
+
+/* "Internal" get/set operations */
+static inline uint64_t __get_quad(intel_iommu_state *s, hwaddr addr)
+{
+    return *((uint64_t *)&s->csr[addr]);
+}
+
+static inline uint32_t __get_long(intel_iommu_state *s, hwaddr addr)
+{
+    return *((uint32_t *)&s->csr[addr]);
+}
+
+
 
 /* val = (val & ~clear) | mask */
 static inline uint32_t set_mask_long(intel_iommu_state *s, hwaddr addr,
@@ -193,7 +201,7 @@ static void vtd_root_table_setup(intel_iommu_state *s)
 
 /* Context-cache invalidation
  * Returns the Context Actual Invalidation Granularity.
- * @val: the new value of the CCMD_REG
+ * @val: the content of the CCMD_REG
  */
 static uint64_t vtd_context_cache_invalidate(intel_iommu_state *s, uint64_t val)
 {
@@ -229,7 +237,7 @@ static uint64_t vtd_context_cache_invalidate(intel_iommu_state *s, uint64_t val)
 
 /* Flush IOTLB
  * Returns the IOTLB Actual Invalidation Granularity.
- * @val: the new val of the IOTLB_REG
+ * @val: the content of the IOTLB_REG
  */
 static uint64_t vtd_iotlb_flush(intel_iommu_state *s, uint64_t val)
 {
@@ -260,7 +268,7 @@ static uint64_t vtd_iotlb_flush(intel_iommu_state *s, uint64_t val)
     return iaig;
 }
 
-static int handle_invalidate(intel_iommu_state *s, uint16_t i)
+/*static int handle_invalidate(intel_iommu_state *s, uint16_t i)
 {
     intel_iommu_inv_desc entry;
     uint8_t type;
@@ -287,10 +295,10 @@ static int handle_invalidate(intel_iommu_state *s, uint16_t i)
         D(" - not impl - ");
     }
     return 0;
-}
+}*/
 
 
-static void handle_iqt_write(intel_iommu_state *s, uint64_t val)
+/*static void handle_iqt_write(intel_iommu_state *s, uint64_t val)
 {
     s->iq_tail = (val >> 4) & 0x7fff;
     D("Write to IQT_REG new tail = %d", s->iq_tail);
@@ -299,7 +307,7 @@ static void handle_iqt_write(intel_iommu_state *s, uint64_t val)
         return;
     }
 
-    /* Process the invalidation queue */
+    //Process the invalidation queue
     while (s->iq_head != s->iq_tail) {
         handle_invalidate(s, s->iq_head++);
         if (s->iq_head == s->iq_sz) {
@@ -309,7 +317,7 @@ static void handle_iqt_write(intel_iommu_state *s, uint64_t val)
     *((uint64_t *)&s->csr[DMAR_IQH_REG]) = s->iq_head << 4;
 
     set_quad(s, DMAR_IQT_REG, val);
-}
+}*/
 
 /* Set Root Table Pointer */
 static void handle_gcmd_srtp(intel_iommu_state *s, bool en)
@@ -340,7 +348,7 @@ static void handle_gcmd_te(intel_iommu_state *s, bool en)
 /* Handle write to Global Command Register */
 static void handle_gcmd_write(intel_iommu_state *s, uint32_t val)
 {
-    uint32_t oldval = *((uint32_t *)&s->csr[DMAR_GCMD_REG]);
+    uint32_t oldval = __get_long(s, DMAR_GCMD_REG);
     uint32_t changed = oldval ^ val;
     if (changed & VTD_GCMD_TE) {
         handle_gcmd_te(s, val & VTD_GCMD_TE);
@@ -378,46 +386,37 @@ static void handle_gcmd_write(intel_iommu_state *s, uint32_t val)
 }
 
 /* Handle write to Context Command Register */
-static void handle_ccmd_write(intel_iommu_state *s, uint64_t val)
+static void handle_ccmd_write(intel_iommu_state *s)
 {
     uint64_t ret;
+    uint64_t val = __get_quad(s, DMAR_CCMD_REG);
+
     /* Context-cache invalidation request */
     if (val & VTD_CCMD_ICC) {
         ret = vtd_context_cache_invalidate(s, val);
 
         /* Invalidation completed. Change something to show */
-        set_quad(s, DMAR_CCMD_REG, val);
         set_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_ICC, 0ULL);
         ret = set_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_CAIG_MASK, ret);
         D("CCMD_REG write-back val: 0x%lx", ret);
-        goto out;
     }
-
-    set_quad(s, DMAR_CCMD_REG, val);
-
-out:
-    return;
 }
 
 /* Handle write to IOTLB Invalidation Register */
-static void handle_iotlb_write(intel_iommu_state *s, uint64_t val)
+static void handle_iotlb_write(intel_iommu_state *s)
 {
     uint64_t ret;
+    uint64_t val = __get_quad(s, DMAR_IOTLB_REG);
 
     /* IOTLB invalidation request */
     if (val & VTD_TLB_IVT) {
         ret = vtd_iotlb_flush(s, val);
 
         /* Invalidation completed. Change something to show */
-        set_quad(s, DMAR_IOTLB_REG, val);
         set_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_IVT, 0ULL);
         ret = set_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_FLUSH_GRANU_MASK_A, ret);
         D("IOTLB_REG write-back val: 0x%lx", ret);
-        goto out;
     }
-
-out:
-    return;
 }
 
 
@@ -425,7 +424,6 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
 {
     intel_iommu_state *s = opaque;
     uint64_t val;
-    hwaddr reg_addr = addr;
 
     if (addr + size > DMAR_REG_SIZE) {
         D("addr outside region: max 0x%x, got 0x%lx %d", DMAR_REG_SIZE,
@@ -434,31 +432,27 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
     }
 
     assert(size == 4 || size == 8);
-    if (former_size) {
-        reg_addr = addr - former_size;
-    }
 
-    switch (reg_addr) {
+    switch (addr) {
     /* Root Table Address Register, 64-bit */
     case DMAR_RTADDR_REG:
         if (size == 4) {
-            if (former_size == 0) {
-                former_size = size;
-                val = (uint32_t)s->root;
-            } else {
-                former_size = 0;
-                val = s->root >> 32;
-            }
+            val = (uint32_t)s->root;
         } else {
             val = s->root;
         }
         break;
 
+    case DMAR_RTADDR_REG_HI:
+        assert(size == 4);
+        val = s->root >> 32;
+        break;
+
     default:
         if (size == 4) {
-            val = get_long(s, reg_addr);
+            val = get_long(s, addr);
         } else if (size == 8) {
-            val = get_quad(s, reg_addr);
+            val = get_quad(s, addr);
         }
     }
 
@@ -470,14 +464,12 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
                           uint64_t val, unsigned size)
 {
     intel_iommu_state *s = opaque;
-    hwaddr reg_addr = addr;
 
     if (addr + size > DMAR_REG_SIZE) {
         D("addr outside region: max 0x%x, got 0x%lx %d", DMAR_REG_SIZE,
           addr, size);
         return;
     }
-    D("addr 0x%lx size %d val 0x%lx", addr, size, val);
 
     assert(size == 4 || size == 8);
 
@@ -485,20 +477,20 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         return;
     }
 
-    if (former_size) {
-        reg_addr = addr - former_size;  /* Get the exact reg addr */
-    }
-
     /* Val should be written into csr within the handler */
-    switch (reg_addr) {
+    switch (addr) {
     /* Global Command Register, 32-bit */
     case DMAR_GCMD_REG:
-        assert(former_size == 0);
+        D("DMAR_GCMD_REG write addr 0x%lx, size %d, val 0x%lx", addr, size,
+          val);
         handle_gcmd_write(s, val);
         break;
 
     /* Invalidation Queue Tail Register, 64-bit */
-    case DMAR_IQT_REG:
+/*    case DMAR_IQT_REG:
+        if (size == 4) {
+
+        }
         if (size == 4) {
             if (former_size == 0) {
                 former_size = size;
@@ -512,49 +504,94 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         }
         handle_iqt_write(s, val);
         break;
-
+*/
     /* Context Command Register, 64-bit */
     case DMAR_CCMD_REG:
+        D("DMAR_CCMD_REG write addr 0x%lx, size %d, val 0x%lx", addr, size,
+          val);
         if (size == 4) {
-            if (former_size == 0) {
-                former_size = size;
-                former_value = val;
-                goto out;
-            } else {
-                val = (val << 32) + former_value;
-                former_size = 0;
-                former_value = 0;
-            }
+            set_long(s, addr, val);
+        } else {
+            set_quad(s, addr, val);
+            handle_ccmd_write(s);
         }
-        handle_ccmd_write(s, val);
         break;
+
+    case DMAR_CCMD_REG_HI:
+        D("DMAR_CCMD_REG_HI write addr 0x%lx, size %d, val 0x%lx", addr, size,
+          val);
+        assert(size == 4);
+        set_long(s, addr, val);
+        handle_ccmd_write(s);
+        break;
+
 
     /* IOTLB Invalidation Register, 64-bit */
     case DMAR_IOTLB_REG:
+        D("DMAR_IOTLB_REG write addr 0x%lx, size %d, val 0x%lx", addr, size,
+          val);
         if (size == 4) {
-            if (former_size == 0) {
-                former_size = size;
-                former_value = val;
-                goto out;
-            } else {
-                val = (val << 32) + former_value;
-                former_size = 0;
-                former_value = 0;
-            }
+            set_long(s, addr, val);
+        } else {
+            set_quad(s, addr, val);
+            handle_iotlb_write(s);
         }
-        handle_iotlb_write(s, val);
+        break;
+
+    case DMAR_IOTLB_REG_HI:
+        D("DMAR_IOTLB_REG_HI write addr 0x%lx, size %d, val 0x%lx", addr, size,
+          val);
+        assert(size == 4);
+        set_long(s, addr, val);
+        handle_iotlb_write(s);
+        break;
+
+    /* Fault Status Register, 32-bit */
+    case DMAR_FSTS_REG:
+    /* Fault Event Data Register, 32-bit */
+    case DMAR_FEDATA_REG:
+    /* Fault Event Address Register, 32-bit */
+    case DMAR_FEADDR_REG:
+    /* Fault Event Upper Address Register, 32-bit */
+    case DMAR_FEUADDR_REG:
+    /* Fault Event Control Register, 32-bit */
+    case DMAR_FECTL_REG:
+    /* Protected Memory Enable Register, 32-bit */
+    case DMAR_PMEN_REG:
+        D("Known reg write addr 0x%lx, size %d, val 0x%lx", addr, size,
+          val);
+        set_long(s, addr, val);
+        break;
+
+
+    /* Root Table Address Register, 64-bit */
+    case DMAR_RTADDR_REG:
+        D("DMAR_RTADDR_REG write addr 0x%lx, size %d, val 0x%lx", addr, size,
+          val);
+        if (size == 4) {
+            set_long(s, addr, val);
+        }else {
+            set_quad(s, addr, val);
+        }
+        break;
+
+    case DMAR_RTADDR_REG_HI:
+        D("DMAR_RTADDR_REG_HI write addr 0x%lx, size %d, val 0x%lx", addr, size,
+          val);
+        assert(size == 4);
+        set_long(s, addr, val);
         break;
 
     default:
+        D("Unhandled reg write addr 0x%lx, size %d, val 0x%lx", addr, size,
+          val);
         if (size == 4) {
-            set_long(s, reg_addr, val);
+            set_long(s, addr, val);
         } else {
-            set_quad(s, reg_addr, val);
+            set_quad(s, addr, val);
         }
     }
 
-out:
-    return;
 }
 
 /*static IOMMUTLBEntry intel_iommu_translate(MemoryRegion *iommu, hwaddr addr)
@@ -615,8 +652,6 @@ static int vtd_init(SysBusDevice *dev)
     intel_iommu_state *s = INTEL_IOMMU_DEVICE(dev);
     memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
                           "intel_iommu", DMAR_REG_SIZE);
-    former_size = 0;
-    former_value = 0;
     D(" ");
 
     /* b.0:2 = 2: Number of domains supported: 256 using 8 bit ids
@@ -673,11 +708,18 @@ static int vtd_init(SysBusDevice *dev)
      * DMAR_PLMBASE_REG, DMAR_PLMLIMIT_REG, DMAR_PHMBASE_REG, DMAR_PHMLIMIT_REG
      */
 
-    /* Bits 18:4 (0x7fff0) is RO, rest is RsvdZ */
+    /* Bits 18:4 (0x7fff0) is RO, rest is RsvdZ
+     * IQH_REG is treated as RsvdZ when not supported in ECAP_REG
+     * define_quad(s, DMAR_IQH_REG, 0, 0, 0);
+     */
     define_quad(s, DMAR_IQH_REG, 0, 0, 0);
 
-    define_quad(s, DMAR_IQT_REG, 0, 0x7fff0ULL, 0);
-    define_quad(s, DMAR_IQA_REG, 0, 0xfffffffffffff007ULL, 0);
+    /* IQT_REG and IQA_REG is treated as RsvdZ when not supported in ECAP_REG
+     * define_quad(s, DMAR_IQT_REG, 0, 0x7fff0ULL, 0);
+     * define_quad(s, DMAR_IQA_REG, 0, 0xfffffffffffff007ULL, 0);
+     */
+    define_quad(s, DMAR_IQT_REG, 0, 0, 0);
+    define_quad(s, DMAR_IQA_REG, 0, 0, 0);
 
     /* Bit 0 is RW1CS - rest is RsvdZ */
     define_long(s, DMAR_ICS_REG, 0, 0, 0x1UL);
