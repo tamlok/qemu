@@ -25,13 +25,53 @@
 #define DEBUG_INTEL_IOMMU
 #ifdef DEBUG_INTEL_IOMMU
 #define D(fmt, ...) \
-    do { fprintf(stderr, "%s, %s: " fmt "\n", __FILE__, __func__, \
+    do { fprintf(stderr, "(vtd)%s, %s: " fmt "\n", __FILE__, __func__, \
                  ## __VA_ARGS__); } while (0)
 #else
 #define D(fmt, ...) \
     do { } while (0)
 #endif
 
+
+#define REG_DESC(_offset, _size) \
+    .offset = _offset, \
+    .size = _size, \
+
+
+static const vtd_reg_desc reserved_regs[] = {
+    { REG_DESC(0x04, 32) },
+    { REG_DESC(0x30, 32) },
+    { REG_DESC(0x48, 64) },
+    { REG_DESC(0x50, 64) },
+    { REG_DESC(0x60, 32) },
+    { REG_DESC(0x98, 32) },
+    { REG_DESC(0xb0, 64) },
+    { REG_DESC(0xd8, 32) },
+};
+
+/* Software may access a 64-bit register by accessing two 32-bit registers,
+ * first the lower half and then the higher half. Use former_size to indicate
+ * how many bytes are read for now to finish accessing the whole register.
+ */
+static int former_size;
+static uint64_t former_value;
+
+static bool is_reserved(uint32_t offset, int size)
+{
+    int i;
+    for (i = 0; i < ARRAY_SIZE(reserved_regs); ++i) {
+        if (reserved_regs[i].offset == offset) {
+            if (size > reserved_regs[i].size) {
+                D("Access to reserved regs exceeds the size %d",
+                  reserved_regs[i].size);
+            }
+            return true;
+        } else {
+            return false;
+        }
+    }
+    return false;
+}
 
 static inline void define_quad(intel_iommu_state *s, hwaddr addr, uint64_t val,
                         uint64_t wmask, uint64_t w1cmask)
@@ -94,12 +134,23 @@ static inline uint32_t get_long(intel_iommu_state *s, hwaddr addr)
     return val & ~womask;
 }
 
+/* val = (val & ~clear) | mask */
 static inline uint32_t set_mask_long(intel_iommu_state *s, hwaddr addr,
-                                     uint32_t mask)
+                                     uint32_t clear, uint32_t mask)
 {
-    uint32_t oldval = *((uint32_t *)&s->csr[addr]);
-    uint32_t val = oldval | mask;
-    *((uint32_t *)&s->csr[addr]) = val;
+    uint32_t *ptr = (uint32_t *)&s->csr[addr];
+    uint32_t val = (*ptr & ~clear) | mask;
+    *ptr = val;
+    return val;
+}
+
+/* val = (val & ~clear) | mask */
+static inline uint64_t set_mask_quad(intel_iommu_state *s, hwaddr addr,
+                                     uint64_t clear, uint64_t mask)
+{
+    uint64_t *ptr = (uint64_t *)&s->csr[addr];
+    uint64_t val = (*ptr & ~clear) | mask;
+    *ptr = val;
     return val;
 }
 
@@ -128,21 +179,86 @@ static void handle_gcmd_qie(intel_iommu_state *s, bool en)
     }
 
     /* Ok - report back to driver */
-    set_mask_long(s, DMAR_GSTS_REG, DMA_GSTS_QIES);
+    set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_QIES);
 }
 
 
-static void iommu_root_table_setup(intel_iommu_state *s)
+static void vtd_root_table_setup(intel_iommu_state *s)
 {
     s->root = *((uint64_t *)&s->csr[DMAR_RTADDR_REG]);
-    s->extended = (s->root >> 11) & 1;
+    s->extended = s->root & VTD_RTADDR_RTT;
     s->root &= ~0xfff;
-    D(" -- address: 0x%lx %s", s->root, (s->extended ? "(Extended)" : ""));
+    D("root_table addr 0x%lx %s", s->root, (s->extended ? "(Extended)" : ""));
+}
+
+/* Context-cache invalidation
+ * Returns the Context Actual Invalidation Granularity.
+ * @val: the new value of the CCMD_REG
+ */
+static uint64_t vtd_context_cache_invalidate(intel_iommu_state *s, uint64_t val)
+{
+    uint64_t caig;
+    uint64_t type = val & VTD_CCMD_CIRG_MASK;
+
+    switch (type) {
+    case VTD_CCMD_GLOBAL_INVL:
+        D("Global invalidation request");
+        caig = VTD_CCMD_GLOBAL_INVL_A;
+        break;
+
+    case VTD_CCMD_DOMAIN_INVL:
+        D("Domain-selective invalidation request");
+        caig = VTD_CCMD_DOMAIN_INVL_A;
+        break;
+
+    case VTD_CCMD_DEVICE_INVL:
+        D("Domain-selective invalidation request");
+        caig = VTD_CCMD_DEVICE_INVL_A;
+        break;
+
+    default:
+        fprintf(stderr, "vtd context-cache invalidation: wrong granularity\n");
+        caig = 0;
+    }
+
+    return caig;
 }
 
 
 #define status_write(x) (((x) >> 5) & 1)
 
+/* Flush IOTLB
+ * Returns the IOTLB Actual Invalidation Granularity.
+ * @val: the new val of the IOTLB_REG
+ */
+static uint64_t vtd_iotlb_flush(intel_iommu_state *s, uint64_t val)
+{
+    uint64_t iaig;
+    uint64_t type = val & VTD_TLB_FLUSH_GRANU_MASK;
+
+    switch (type) {
+    case VTD_TLB_GLOBAL_FLUSH:
+        D("Global IOTLB flush");
+        iaig = VTD_TLB_GLOBAL_FLUSH_A;
+        break;
+
+    case VTD_TLB_DSI_FLUSH:
+        D("Domain-selective IOTLB flush");
+        iaig = VTD_TLB_DSI_FLUSH_A;
+        break;
+
+    case VTD_TLB_PSI_FLUSH:
+        D("Page-selective-within-domain IOTLB flush");
+        iaig = VTD_TLB_PSI_FLUSH_A;
+        break;
+
+    default:
+        fprintf(stderr, "vtd iotlb flush: wrong granularity\n");
+        iaig = 0;
+    }
+
+    return iaig;
+}
 
 static int handle_invalidate(intel_iommu_state *s, uint16_t i)
 {
@@ -191,118 +307,254 @@ static void handle_iqt_write(intel_iommu_state *s, uint64_t val)
         }
     }
     *((uint64_t *)&s->csr[DMAR_IQH_REG]) = s->iq_head << 4;
+
+    set_quad(s, DMAR_IQT_REG, val);
 }
 
-
+/* Set Root Table Pointer */
 static void handle_gcmd_srtp(intel_iommu_state *s, bool en)
 {
     D("Set Root Table Pointer %s", (en ? "on" : "off"));
-
+    /* if @en is false, that is, clearing this bit, it has no effect. */
     if (en) {
-        iommu_root_table_setup(s);
+        vtd_root_table_setup(s);
+        /* Ok - report back to driver */
+        set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_RTPS);
     }
-
-    /* Ok - report back to driver */
-    set_mask_long(s, DMAR_GSTS_REG, DMA_GSTS_RTPS);
 }
 
-
+/* Handle Translation Enable/Disable */
 static void handle_gcmd_te(intel_iommu_state *s, bool en)
 {
     D("Translation Enable %s", (en ? "on" : "off"));
 
-    /* Ok - report back to driver */
-    set_mask_long(s, DMAR_GSTS_REG, DMA_GSTS_TES);
+    if (en) {
+        /* Ok - report back to driver */
+        set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_TES);
+    } else {
+        /* Ok - report back to driver */
+        set_mask_long(s, DMAR_GSTS_REG, VTD_GSTS_TES, 0);
+    }
 }
 
-
+/* Handle write to Global Command Register */
 static void handle_gcmd_write(intel_iommu_state *s, uint32_t val)
 {
     uint32_t oldval = *((uint32_t *)&s->csr[DMAR_GCMD_REG]);
     uint32_t changed = oldval ^ val;
-    if (changed & DMA_GCMD_TE) {
-        handle_gcmd_te(s, val & DMA_GCMD_TE);
+    if (changed & VTD_GCMD_TE) {
+        handle_gcmd_te(s, val & VTD_GCMD_TE);
     }
-    if (val & DMA_GCMD_SRTP) {
-        handle_gcmd_srtp(s, val & DMA_GCMD_SRTP);
+    if (val & VTD_GCMD_SRTP) {
+        handle_gcmd_srtp(s, val & VTD_GCMD_SRTP);
     }
-    if (changed & DMA_GCMD_SFL) {
-        D("Set Fault Log %s", (val & DMA_GCMD_SFL ? "on" : "off"));
+    if (changed & VTD_GCMD_SFL) {
+        D("Set Fault Log %s", (val & VTD_GCMD_SFL ? "on" : "off"));
     }
-    if (changed & DMA_GCMD_EAFL) {
+    if (changed & VTD_GCMD_EAFL) {
         D("Enable Advanced Fault Logging %s",
-          (val & DMA_GCMD_EAFL ? "on" : "off"));
+          (val & VTD_GCMD_EAFL ? "on" : "off"));
     }
-    if (changed & DMA_GCMD_WBF) {
-        D("Write Buffer Flush %s", (val & DMA_GCMD_WBF ? "on" : "off"));
+    if (changed & VTD_GCMD_WBF) {
+        D("Write Buffer Flush %s", (val & VTD_GCMD_WBF ? "on" : "off"));
     }
-    if (changed & DMA_GCMD_QIE) {
-        handle_gcmd_qie(s, val & DMA_GCMD_QIE);
+    if (changed & VTD_GCMD_QIE) {
+        handle_gcmd_qie(s, val & VTD_GCMD_QIE);
     }
-    if (changed & DMA_GCMD_SIRTP) {
+    if (changed & VTD_GCMD_SIRTP) {
         D("Interrupt Remapping Enable %s",
-          (val & DMA_GCMD_SIRTP ? "on" : "off"));
+          (val & VTD_GCMD_SIRTP ? "on" : "off"));
     }
-    if (changed & DMA_GCMD_IRE) {
+    if (changed & VTD_GCMD_IRE) {
         D("Set Interrupt Remapping Table Pointer %s",
-          (val & DMA_GCMD_IRE ? "on" : "off"));
+          (val & VTD_GCMD_IRE ? "on" : "off"));
     }
-    if (changed & DMA_GCMD_CFI) {
+    if (changed & VTD_GCMD_CFI) {
         D("Compatibility Format Interrupt %s",
-          (val & DMA_GCMD_CFI ? "on" : "off"));
+          (val & VTD_GCMD_CFI ? "on" : "off"));
     }
+
+    set_long(s, DMAR_GCMD_REG, val);
+}
+
+/* Handle write to Context Command Register */
+static void handle_ccmd_write(intel_iommu_state *s, uint64_t val)
+{
+    uint64_t ret;
+    /* Context-cache invalidation request */
+    if (val & VTD_CCMD_ICC) {
+        ret = vtd_context_cache_invalidate(s, val);
+
+        /* Invalidation completed. Change something to show */
+        set_quad(s, DMAR_CCMD_REG, val);
+        set_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_ICC, 0ULL);
+        ret = set_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_CAIG_MASK, ret);
+        D("CCMD_REG write-back val: 0x%lx", ret);
+        goto out;
+    }
+
+    set_quad(s, DMAR_CCMD_REG, val);
+
+out:
+    return;
+}
+
+/* Handle write to IOTLB Invalidation Register */
+static void handle_iotlb_write(intel_iommu_state *s, uint64_t val)
+{
+    uint64_t ret;
+
+    /* IOTLB invalidation request */
+    if (val & VTD_TLB_IVT) {
+        ret = vtd_iotlb_flush(s, val);
+
+        /* Invalidation completed. Change something to show */
+        set_quad(s, DMAR_IOTLB_REG, val);
+        set_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_IVT, 0ULL);
+        ret = set_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_FLUSH_GRANU_MASK_A, ret);
+        D("IOTLB_REG write-back val: 0x%lx", ret);
+        goto out;
+    }
+
+out:
+    return;
 }
 
 
-static uint64_t intel_iommu_mem_read(void *opaque, hwaddr addr, unsigned size)
+static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
 {
     intel_iommu_state *s = opaque;
     uint64_t val;
+    hwaddr reg_addr = addr;
+
     if (addr + size > DMAR_REG_SIZE) {
-        D("addr outside region: max %lx, got %lx %x ", addr + size, addr, size);
+        D("addr outside region: max 0x%x, got 0x%lx %d", DMAR_REG_SIZE,
+          addr, size);
         return (uint64_t)-1;
     }
 
-    if (size == 4) {
-        val = get_long(s, addr);
-    } else if (size == 8) {
-        val = get_quad(s, addr);
-    } else {
-        val = (uint64_t)-1;
+    assert(size == 4 || size == 8);
+    if (former_size) {
+        reg_addr = addr - former_size;
     }
 
-    D(" addr %lx size %d val %lx", addr, size, val);
+    switch (reg_addr) {
+    /* Root Table Address Register, 64-bit */
+    case DMAR_RTADDR_REG:
+        if (size == 4) {
+            if (former_size == 0) {
+                former_size = size;
+                val = (uint32_t)s->root;
+            } else {
+                former_size = 0;
+                val = s->root >> 32;
+            }
+        } else {
+            val = s->root;
+        }
+        break;
+
+    default:
+        if (size == 4) {
+            val = get_long(s, reg_addr);
+        } else if (size == 8) {
+            val = get_quad(s, reg_addr);
+        }
+    }
+
+    D("addr 0x%lx size %d val 0x%lx", addr, size, val);
     return val;
 }
 
-static void intel_iommu_mem_write(void *opaque, hwaddr addr,
-                                  uint64_t val, unsigned size)
+static void vtd_mem_write(void *opaque, hwaddr addr,
+                          uint64_t val, unsigned size)
 {
     intel_iommu_state *s = opaque;
+    hwaddr reg_addr = addr;
+
     if (addr + size > DMAR_REG_SIZE) {
-        D("addr outside region: max %lx, got %lx %x ", addr + size, addr, size);
+        D("addr outside region: max 0x%x, got 0x%lx %d", DMAR_REG_SIZE,
+          addr, size);
         return;
     }
-    D(" addr %lx size %d val %lx", addr, size, val);
-    s->csr[addr] = val;
-    if (size == 4) {
-        switch (addr) {
-        case DMAR_GCMD_REG:
-            handle_gcmd_write(s, val);
-            break;
-        case DMAR_IQT_REG:
-            handle_iqt_write(s, val);
-            break;
-        }
-        set_long(s, addr, val);
-    } else if (size == 8) {
-        switch (addr) {
-        case DMAR_IQT_REG:
-            handle_iqt_write(s, val);
-            break;
-        }
-        set_quad(s, addr, val);
+    D("addr 0x%lx size %d val 0x%lx", addr, size, val);
+
+    assert(size == 4 || size == 8);
+
+    if (is_reserved(addr, size)) {
+        return;
     }
+
+    if (former_size) {
+        reg_addr = addr - former_size;  /* Get the exact reg addr */
+    }
+
+    /* Val should be written into csr within the handler */
+    switch (reg_addr) {
+    /* Global Command Register, 32-bit */
+    case DMAR_GCMD_REG:
+        assert(former_size == 0);
+        handle_gcmd_write(s, val);
+        break;
+
+    /* Invalidation Queue Tail Register, 64-bit */
+    case DMAR_IQT_REG:
+        if (size == 4) {
+            if (former_size == 0) {
+                former_size = size;
+                former_value = val;
+                goto out;
+            } else {
+                val = (val << 32) + former_value;
+                former_size = 0;
+                former_value = 0;
+            }
+        }
+        handle_iqt_write(s, val);
+        break;
+
+    /* Context Command Register, 64-bit */
+    case DMAR_CCMD_REG:
+        if (size == 4) {
+            if (former_size == 0) {
+                former_size = size;
+                former_value = val;
+                goto out;
+            } else {
+                val = (val << 32) + former_value;
+                former_size = 0;
+                former_value = 0;
+            }
+        }
+        handle_ccmd_write(s, val);
+        break;
+
+    /* IOTLB Invalidation Register, 64-bit */
+    case DMAR_IOTLB_REG:
+        if (size == 4) {
+            if (former_size == 0) {
+                former_size = size;
+                former_value = val;
+                goto out;
+            } else {
+                val = (val << 32) + former_value;
+                former_size = 0;
+                former_value = 0;
+            }
+        }
+        handle_iotlb_write(s, val);
+        break;
+
+    default:
+        if (size == 4) {
+            set_long(s, reg_addr, val);
+        } else {
+            set_quad(s, reg_addr, val);
+        }
+    }
+
+out:
+    return;
 }
 
 /*static IOMMUTLBEntry intel_iommu_translate(MemoryRegion *iommu, hwaddr addr)
@@ -316,7 +568,7 @@ static void intel_iommu_mem_write(void *opaque, hwaddr addr,
     };
 }*/
 
-static const VMStateDescription intel_iommu_vmstate = {
+static const VMStateDescription vtd_vmstate = {
     .name = "iommu_intel",
     .version_id = 1,
     .minimum_version_id = 1,
@@ -328,9 +580,9 @@ static const VMStateDescription intel_iommu_vmstate = {
 };
 
 
-static const MemoryRegionOps intel_iommu_mem_ops = {
-    .read = intel_iommu_mem_read,
-    .write = intel_iommu_mem_write,
+static const MemoryRegionOps vtd_mem_ops = {
+    .read = vtd_mem_read,
+    .write = vtd_mem_write,
     .endianness = DEVICE_NATIVE_ENDIAN,
     .impl = {
         .min_access_size = 4,
@@ -352,17 +604,19 @@ static Property iommu_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
-static void intel_iommu_reset(DeviceState *d)
+static void vtd_reset(DeviceState *d)
 {
     /* intel_iommu_state *s = INTEL_IOMMU_DEVICE(d); */
     D(" ");
 }
 
-static int intel_iommu_init(SysBusDevice *dev)
+static int vtd_init(SysBusDevice *dev)
 {
     intel_iommu_state *s = INTEL_IOMMU_DEVICE(dev);
-    memory_region_init_io(&s->csrmem, OBJECT(s), &intel_iommu_mem_ops, s,
+    memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
                           "intel_iommu", DMAR_REG_SIZE);
+    former_size = 0;
+    former_value = 0;
     D(" ");
 
     /* b.0:2 = 2: Number of domains supported: 256 using 8 bit ids
@@ -375,20 +629,21 @@ static int intel_iommu_init(SysBusDevice *dev)
      * b.16:21 = 38: MGAW(Maximum Guest Address Width) = 38 + 1
      * b.22 = 1: ZLR(Zero Length Read) supports zero length DMA read requests
      *           to write-only pages
-     * b.24:33 = 32: FRO(Fault-recording Register offset)
+     * b.24:33 = 34: FRO(Fault-recording Register offset)
      * b.54 = 0: DWD(Write Draining), draining of write requests not supported
      * b.55 = 0: DRD(Read Draining), draining of read requests not supported
      */
-    const uint64_t dmar_cap_reg_value = 0x20e60202ULL;
+    const uint64_t dmar_cap_reg_value = 0x00660202ULL | VTD_CAP_FRO
+                                        | VTD_CAP_NFR;
 
     /* b.1 = 0: QI(Queued Invalidation support) not supported
      * b.2 = 0: DT(Device-TLB support)
      * b.3 = 0: IR(Interrupt Remapping support) not supported
      * b.4 = 0: EIM(Extended Interrupt Mode) not supported
-     * b.8:17 = 16: IRO(IOTLB Register Offset)
+     * b.8:17 = 15: IRO(IOTLB Register Offset)
      * b.20:23 = 15: MHMV(Maximum Handle Mask Value)
      */
-    const uint64_t dmar_ecap_reg_value = 0xf01000ULL;
+    const uint64_t dmar_ecap_reg_value = 0xf00000ULL | VTD_ECAP_IRO;
 
     /* Define registers with default values and bit semantics */
     define_long(s, DMAR_VER_REG, 0x10UL, 0, 0);  /* set MAX = 1, RO */
@@ -407,7 +662,13 @@ static int intel_iommu_init(SysBusDevice *dev)
     define_long(s, DMAR_FEUADDR_REG, 0, 0xffffffffUL, 0); /* 31:0 RW */
 
     define_quad(s, DMAR_AFLOG_REG, 0, 0xffffffffffffff00ULL, 0);
-    define_long(s, DMAR_PMEN_REG, 0, 0x80000000UL, 0);
+
+    /* Treated as RO for implementations that PLMR and PHMR fields reported
+     * as Clear in the CAP_REG.
+     * define_long(s, DMAR_PMEN_REG, 0, 0x80000000UL, 0);
+     */
+    define_long(s, DMAR_PMEN_REG, 0, 0, 0);
+
     /* TBD: The definition of these are dynamic:
      * DMAR_PLMBASE_REG, DMAR_PLMLIMIT_REG, DMAR_PHMBASE_REG, DMAR_PHMLIMIT_REG
      */
@@ -436,6 +697,16 @@ static int intel_iommu_init(SysBusDevice *dev)
     define_long(s, DMAR_PEDATA_REG, 0, 0xffffffffUL, 0);
     define_long(s, DMAR_PEADDR_REG, 0, 0xfffffffcUL, 0);
     define_long(s, DMAR_PEUADDR_REG, 0, 0xffffffffUL, 0);
+
+    /* When MTS not supported in ECAP_REG, these regs are RsvdZ */
+    define_long(s, DMAR_MTRRCAP_REG, 0, 0, 0);
+    define_long(s, DMAR_MTRRDEF_REG, 0, 0, 0);
+
+    /* IOTLB registers */
+    define_quad(s, DMAR_IOTLB_REG, 0, 0Xb003ffff00000000ULL, 0);
+    define_quad(s, DMAR_IVA_REG, 0, 0xfffffffffffff07fULL, 0);
+    define_quad_wo(s, DMAR_IVA_REG, 0xfffffffffffff07fULL);
+
     return 0;
 }
 
@@ -444,9 +715,9 @@ static void iommu_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
     SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
-    k->init = intel_iommu_init;
-    dc->reset = intel_iommu_reset;
-    dc->vmsd = &intel_iommu_vmstate;
+    k->init = vtd_init;
+    dc->reset = vtd_reset;
+    dc->vmsd = &vtd_vmstate;
     dc->props = iommu_properties;
 }
 

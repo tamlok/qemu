@@ -81,8 +81,17 @@
 #define DMAR_MTRRCAP_REG 0x100  /* MTRR capability register */
 #define DMAR_MTRRDEF_REG 0x108  /* MTRR default type register */
 
+/* IOTLB */
+#define DMAR_IOTLB_REG_OFFSET 0xf0  /* Offset to the IOTLB registers */
+#define DMAR_IVA_REG DMAR_IOTLB_REG_OFFSET  /* Invalidate Address Register */
+/* IOTLB Invalidate Register */
+#define DMAR_IOTLB_REG (DMAR_IOTLB_REG_OFFSET + 0x8)
 
-#define DMAR_REG_SIZE   0x220    /* Last reg 64 bit at 0x218 */
+/* FRCD */
+#define DMAR_FRCD_REG_OFFSET 0x220 /* Offset to the Fault Recording Registers */
+#define DMAR_FRCD_REG_NR 1 /* Num of Fault Recording Registers */
+
+#define DMAR_REG_SIZE   (DMAR_FRCD_REG_OFFSET + 128 * DMAR_FRCD_REG_NR)
 
 /* The iommu (DMAR) device state struct */
 
@@ -125,18 +134,20 @@ typedef struct intel_iommu_inv_desc {
 
 
 /* IOTLB_REG */
-#define DMA_TLB_FLUSH_GRANU_OFFSET  60
-#define DMA_TLB_GLOBAL_FLUSH (((uint64_t)1) << 60)
-#define DMA_TLB_DSI_FLUSH (((uint64_t)2) << 60)
-#define DMA_TLB_PSI_FLUSH (((uint64_t)3) << 60)
-#define DMA_TLB_IIRG(type) ((type >> 60) & 7)
-#define DMA_TLB_IAIG(val) (((val) >> 57) & 7)
-#define DMA_TLB_READ_DRAIN (((uint64_t)1) << 49)
-#define DMA_TLB_WRITE_DRAIN (((uint64_t)1) << 48)
-#define DMA_TLB_DID(id) (((uint64_t)((id) & 0xffff)) << 32)
-#define DMA_TLB_IVT (((uint64_t)1) << 63)
-#define DMA_TLB_IH_NONLEAF (((uint64_t)1) << 6)
-#define DMA_TLB_MAX_SIZE (0x3f)
+#define VTD_TLB_GLOBAL_FLUSH (1ULL << 60) /* Global invalidation */
+#define VTD_TLB_DSI_FLUSH (2ULL << 60)  /* Domain-selective invalidation */
+#define VTD_TLB_PSI_FLUSH (3ULL << 60)  /* Page-selective invalidation */
+#define VTD_TLB_FLUSH_GRANU_MASK (0x11ULL << 60)
+#define VTD_TLB_GLOBAL_FLUSH_A (1ULL << 57)
+#define VTD_TLB_DSI_FLUSH_A (2ULL << 57)
+#define VTD_TLB_PSI_FLUSH_A (3ULL << 57)
+#define VTD_TLB_FLUSH_GRANU_MASK_A (0X11ULL << 57)
+#define VTD_TLB_READ_DRAIN (1ULL << 49)
+#define VTD_TLB_WRITE_DRAIN (1ULL << 48)
+#define VTD_TLB_DID(id) (((uint64_t)((id) & 0xffffULL)) << 32)
+#define VTD_TLB_IVT (1ULL << 63)
+#define VTD_TLB_IH_NONLEAF (1ULL << 6)
+#define VTD_TLB_MAX_SIZE (0x3f)
 
 /* INVALID_DESC */
 #define DMA_CCMD_INVL_GRANU_OFFSET  61
@@ -155,39 +166,44 @@ typedef struct intel_iommu_inv_desc {
 #define DMA_PMEN_PRS (((uint32_t)1)<<0)
 
 /* GCMD_REG */
-#define DMA_GCMD_TE (((uint32_t)1) << 31)
-#define DMA_GCMD_SRTP (((uint32_t)1) << 30)
-#define DMA_GCMD_SFL (((uint32_t)1) << 29)
-#define DMA_GCMD_EAFL (((uint32_t)1) << 28)
-#define DMA_GCMD_WBF (((uint32_t)1) << 27)
-#define DMA_GCMD_QIE (((uint32_t)1) << 26)
-#define DMA_GCMD_SIRTP (((uint32_t)1) << 24)
-#define DMA_GCMD_IRE (((uint32_t) 1) << 25)
-#define DMA_GCMD_CFI (((uint32_t) 1) << 23)
+#define VTD_GCMD_TE (1UL << 31)
+#define VTD_GCMD_SRTP (1UL << 30)
+#define VTD_GCMD_SFL (1UL << 29)
+#define VTD_GCMD_EAFL (1UL << 28)
+#define VTD_GCMD_WBF (1UL << 27)
+#define VTD_GCMD_QIE (1UL << 26)
+#define VTD_GCMD_IRE (1UL << 25)
+#define VTD_GCMD_SIRTP (1UL << 24)
+#define VTD_GCMD_CFI (1UL << 23)
 
 /* GSTS_REG */
-#define DMA_GSTS_TES (((uint32_t)1) << 31)
-#define DMA_GSTS_RTPS (((uint32_t)1) << 30)
-#define DMA_GSTS_FLS (((uint32_t)1) << 29)
-#define DMA_GSTS_AFLS (((uint32_t)1) << 28)
-#define DMA_GSTS_WBFS (((uint32_t)1) << 27)
-#define DMA_GSTS_QIES (((uint32_t)1) << 26)
-#define DMA_GSTS_IRTPS (((uint32_t)1) << 24)
-#define DMA_GSTS_IRES (((uint32_t)1) << 25)
-#define DMA_GSTS_CFIS (((uint32_t)1) << 23)
+#define VTD_GSTS_TES (1UL << 31)
+#define VTD_GSTS_RTPS (1UL << 30)
+#define VTD_GSTS_FLS (1UL << 29)
+#define VTD_GSTS_AFLS (1UL << 28)
+#define VTD_GSTS_WBFS (1UL << 27)
+#define VTD_GSTS_QIES (1UL << 26)
+#define VTD_GSTS_IRES (1UL << 25)
+#define VTD_GSTS_IRTPS (1UL << 24)
+#define VTD_GSTS_CFIS (1UL << 23)
 
 /* CCMD_REG */
-#define DMA_CCMD_ICC (((uint64_t)1) << 63)
-#define DMA_CCMD_GLOBAL_INVL (((uint64_t)1) << 61)
-#define DMA_CCMD_DOMAIN_INVL (((uint64_t)2) << 61)
-#define DMA_CCMD_DEVICE_INVL (((uint64_t)3) << 61)
-#define DMA_CCMD_FM(m) (((uint64_t)((m) & 0x3)) << 32)
-#define DMA_CCMD_MASK_NOBIT 0
-#define DMA_CCMD_MASK_1BIT 1
-#define DMA_CCMD_MASK_2BIT 2
-#define DMA_CCMD_MASK_3BIT 3
-#define DMA_CCMD_SID(s) (((uint64_t)((s) & 0xffff)) << 16)
-#define DMA_CCMD_DID(d) ((uint64_t)((d) & 0xffff))
+#define VTD_CCMD_ICC (1ULL << 63)
+#define VTD_CCMD_GLOBAL_INVL (1ULL << 61)
+#define VTD_CCMD_DOMAIN_INVL (2ULL << 61)
+#define VTD_CCMD_DEVICE_INVL (3ULL << 61)
+#define VTD_CCMD_CIRG_MASK (0x11ULL << 61)
+#define VTD_CCMD_GLOBAL_INVL_A (1ULL << 59)
+#define VTD_CCMD_DOMAIN_INVL_A (2ULL << 59)
+#define VTD_CCMD_DEVICE_INVL_A (3ULL << 59)
+#define VTD_CCMD_CAIG_MASK (0x11ULL << 59)
+#define VTD_CCMD_FM(m) (((uint64_t)((m) & 0x3ULL)) << 32)
+#define VTD_CCMD_MASK_NOBIT 0
+#define VTD_CCMD_MASK_1BIT 1
+#define VTD_CCMD_MASK_2BIT 2
+#define VTD_CCMD_MASK_3BIT 3
+#define VTD_CCMD_SID(s) (((uint64_t)((s) & 0xffffULL)) << 16)
+#define VTD_CCMD_DID(d) ((uint64_t)((d) & 0xffffULL))
 
 /* FECTL_REG */
 #define DMA_FECTL_IM (((uint32_t)1) << 31)
@@ -199,5 +215,24 @@ typedef struct intel_iommu_inv_desc {
 #define DMA_FSTS_ICE (1 << 5)
 #define DMA_FSTS_ITE (1 << 6)
 #define dma_fsts_fault_record_index(s) (((s) >> 8) & 0xff)
+
+/* RTADDR_REG */
+#define VTD_RTADDR_RTT (1ULL << 11)
+
+
+/* ECAP_REG */
+#define VTD_ECAP_IRO (DMAR_IOTLB_REG_OFFSET << 4) /* (val >> 4) << 8 */
+
+/* CAP_REG */
+#define VTD_CAP_FRO (DMAR_FRCD_REG_OFFSET << 20) /* (val >> 4) << 24 */
+#define VTD_CAP_NFR ((uint64_t)(DMAR_FRCD_REG_NR - 1) << 40)
+
+/* Register descriptor */
+struct vtd_reg_desc {
+    uint32_t offset;
+    int size;
+};
+typedef struct vtd_reg_desc vtd_reg_desc;
+
 
 #endif
