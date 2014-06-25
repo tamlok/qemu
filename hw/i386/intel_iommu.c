@@ -162,6 +162,229 @@ static inline uint64_t set_mask_quad(intel_iommu_state *s, hwaddr addr,
     return val;
 }
 
+
+static inline bool root_entry_present(vtd_root_entry* root)
+{
+    return (root->val & ROOT_ENTRY_P);
+}
+
+
+static bool get_root_entry(intel_iommu_state *s, int index, vtd_root_entry *re)
+{
+    dma_addr_t addr;
+    if (index >= 0 && index < ROOT_ENTRY_NR) {
+        addr = s->root + index * sizeof(*re);
+        if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
+            fprintf(stderr, "(vtd) fail to read root table");
+            return false;
+        }
+        re->val = le64_to_cpu(re->val);
+        return true;
+    }
+
+    return false;
+}
+
+
+static inline bool context_entry_present(vtd_context_entry *context)
+{
+    return (context->lo & CONTEXT_ENTRY_P);
+}
+
+static bool get_context_entry_from_root(vtd_root_entry *root, int index,
+                                        vtd_context_entry *ce)
+{
+    dma_addr_t addr;
+
+    if (!root_entry_present(root)) {
+        return false;
+    }
+    if (index >= 0 && index < CONTEXT_ENTRY_NR) {
+        addr = (root->val & ROOT_ENTRY_CTP) + index * sizeof(*ce);
+        if (dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce))) {
+            fprintf(stderr, "(vtd) fail to read context table\n");
+            return false;
+        }
+        ce->lo = le64_to_cpu(ce->lo);
+        ce->hi = le64_to_cpu(ce->hi);
+        return true;
+    }
+
+    return false;
+}
+
+static inline dma_addr_t get_slpt_base_from_context(vtd_context_entry *ce)
+{
+    return (ce->lo & CONTEXT_ENTRY_SLPTPTR);
+}
+
+#define SLPT_LEVEL_BITS 9
+
+static inline int slpt_level_shift(int level)
+{
+    return (VTD_PAGE_SHIFT + (level - 1) * SLPT_LEVEL_BITS);
+}
+
+static inline bool slpte_present(uint64_t slpte)
+{
+    return (slpte & 3);
+}
+
+/* Calculate the GPA given the base address, the index in the page table and
+ * the level of this page table.
+ */
+static inline uint64_t get_slpt_gpa(uint64_t addr, uint64_t index, int level)
+{
+    return (addr + (index << slpt_level_shift(level)));
+}
+
+static inline uint64_t get_slpte_addr(uint64_t slpte)
+{
+    return (slpte & SL_PT_BASE_ADDR_MASK);
+}
+
+/* Whether the pte points to a large page */
+static inline bool is_large_pte(uint64_t pte)
+{
+    return (pte & PT_PAGE_SIZE_MASK);
+}
+
+/* Whether the pte indicates the address of the page frame */
+static inline bool is_last_slpte(uint64_t slpte, int level)
+{
+    if (level == SL_PT_LEVEL) {
+        return true;
+    }
+    if (is_large_pte(slpte)) {
+        return true;
+    }
+    return false;
+}
+
+/* Get the content of a spte located in @base_addr[@index] */
+static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
+{
+    uint64_t slpte;
+    if (index >= SL_PT_ENTRY_NR) {
+        return (uint64_t)-1;
+    }
+    if (dma_memory_read(&address_space_memory,
+                        base_addr + index * sizeof(slpte), &slpte,
+                        sizeof(slpte))) {
+        fprintf(stderr, "(vtd) fail to read slpte\n");
+        return (uint64_t)-1;
+    }
+    slpte = le64_to_cpu(slpte);
+    return slpte;
+}
+
+
+static inline int gfn_level_offset(uint64_t gfn, int level)
+{
+    uint64_t gpa = gfn << 12;
+    return ((gpa >> slpt_level_shift(level)) & ((1ULL << SLPT_LEVEL_BITS) - 1));
+}
+
+/*static uint64_t gfn_to_slpte(vtd_context_entry *ce, uint64_t gfn)
+{
+    dma_addr_t addr = get_slpt_base_from_context(ce);
+    int level = SL_PDP_LEVEL;
+    int offset;
+    uint64_t slpte;
+
+
+    while (true) {
+        offset = gfn_level_offset(gfn, level);
+        slpte = get_slpte(addr, offset);
+        if (!slpte_present(slpte)) {
+            slpte = (uint64_t)-1;
+            break;
+        }
+		if (is_last_slpte(slpte, level)) {
+            break;
+        }
+        addr = get_slpte_addr(slpte);
+        level--;
+    }
+    return slpte;
+}*/
+
+
+/* Iterate a Second Level Page Table */
+static void __walk_slpt(dma_addr_t table_addr, int level, uint64_t gpa)
+{
+    uint64_t index;
+    uint64_t next_gpa;
+    dma_addr_t next_table_addr;
+    uint64_t slpte;
+
+    if (level < SL_PT_LEVEL) {
+        return;
+    }
+
+    D("level %d, gpa 0x%lx", level, gpa);
+    for (index = 0; index < SL_PT_ENTRY_NR; ++index) {
+        if (dma_memory_read(&address_space_memory,
+                            table_addr + index * sizeof(slpte), &slpte,
+                            sizeof(slpte))) {
+            fprintf(stderr, "(vtd) fail to read slpte\n");
+            return;
+        }
+        if (!slpte_present(slpte)) {
+            continue;
+        }
+
+        next_gpa = get_slpt_gpa(gpa, index, level);
+        next_table_addr = get_slpte_addr(slpte);
+
+        if (is_last_slpte(slpte, level)) {
+            D("slpte gpa 0x%lx, hpa 0x%lx", next_gpa, next_table_addr);
+            if (next_gpa != next_table_addr) {
+                D("Not 1:1 mapping, slpte 0x%lx", slpte);
+            }
+        } else {
+            __walk_slpt(next_table_addr, level - 1, next_gpa);
+        }
+    }
+}
+
+
+
+static void print_paging_structure_from_context(vtd_context_entry *ce)
+{
+    dma_addr_t table_addr;
+
+    table_addr = get_slpt_base_from_context(ce);
+    __walk_slpt(table_addr, SL_PDP_LEVEL, 0);
+}
+
+
+static void print_root_table(intel_iommu_state *s)
+{
+    int i;
+    int j;
+    vtd_root_entry re;
+    vtd_context_entry ce;
+
+    for (i = 0; i < ROOT_ENTRY_NR; ++i) {
+        if (get_root_entry(s, i, &re) && root_entry_present(&re)) {
+            D("root_entry 0x%x: hi 0x%lx low 0x%lx", i, re.rsvd, re.val);
+
+            for (j = 0; j < CONTEXT_ENTRY_NR; ++j) {
+                if (get_context_entry_from_root(&re, j, &ce)
+                    && context_entry_present(&ce)) {
+                    D("context_entry 0x%x: hi 0x%lx low 0x%lx", j, ce.hi, ce.lo);
+                    D("--------------------------------");
+                    print_paging_structure_from_context(&ce);
+                }
+            }
+        }
+    }
+}
+
+
+
+
 static void iommu_inv_queue_setup(intel_iommu_state *s)
 {
     uint64_t tail_val;
@@ -265,6 +488,7 @@ static uint64_t vtd_iotlb_flush(intel_iommu_state *s, uint64_t val)
         iaig = 0;
     }
 
+    print_root_table(s);
     return iaig;
 }
 
@@ -331,6 +555,7 @@ static void handle_gcmd_srtp(intel_iommu_state *s, bool en)
     }
 }
 
+
 /* Handle Translation Enable/Disable */
 static void handle_gcmd_te(intel_iommu_state *s, bool en)
 {
@@ -343,6 +568,7 @@ static void handle_gcmd_te(intel_iommu_state *s, bool en)
         /* Ok - report back to driver */
         set_mask_long(s, DMAR_GSTS_REG, VTD_GSTS_TES, 0);
     }
+    print_root_table(s);
 }
 
 /* Handle write to Global Command Register */
@@ -593,6 +819,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     }
 
 }
+
 
 /*static IOMMUTLBEntry intel_iommu_translate(MemoryRegion *iommu, hwaddr addr)
 {

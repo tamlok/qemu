@@ -155,11 +155,11 @@ typedef struct intel_iommu_inv_desc {
 #define VTD_TLB_GLOBAL_FLUSH (1ULL << 60) /* Global invalidation */
 #define VTD_TLB_DSI_FLUSH (2ULL << 60)  /* Domain-selective invalidation */
 #define VTD_TLB_PSI_FLUSH (3ULL << 60)  /* Page-selective invalidation */
-#define VTD_TLB_FLUSH_GRANU_MASK (0x11ULL << 60)
+#define VTD_TLB_FLUSH_GRANU_MASK (3ULL << 60)
 #define VTD_TLB_GLOBAL_FLUSH_A (1ULL << 57)
 #define VTD_TLB_DSI_FLUSH_A (2ULL << 57)
 #define VTD_TLB_PSI_FLUSH_A (3ULL << 57)
-#define VTD_TLB_FLUSH_GRANU_MASK_A (0X11ULL << 57)
+#define VTD_TLB_FLUSH_GRANU_MASK_A (3ULL << 57)
 #define VTD_TLB_READ_DRAIN (1ULL << 49)
 #define VTD_TLB_WRITE_DRAIN (1ULL << 48)
 #define VTD_TLB_DID(id) (((uint64_t)((id) & 0xffffULL)) << 32)
@@ -210,12 +210,12 @@ typedef struct intel_iommu_inv_desc {
 #define VTD_CCMD_GLOBAL_INVL (1ULL << 61)
 #define VTD_CCMD_DOMAIN_INVL (2ULL << 61)
 #define VTD_CCMD_DEVICE_INVL (3ULL << 61)
-#define VTD_CCMD_CIRG_MASK (0x11ULL << 61)
+#define VTD_CCMD_CIRG_MASK (3ULL << 61)
 #define VTD_CCMD_GLOBAL_INVL_A (1ULL << 59)
 #define VTD_CCMD_DOMAIN_INVL_A (2ULL << 59)
 #define VTD_CCMD_DEVICE_INVL_A (3ULL << 59)
-#define VTD_CCMD_CAIG_MASK (0x11ULL << 59)
-#define VTD_CCMD_FM(m) (((uint64_t)((m) & 0x3ULL)) << 32)
+#define VTD_CCMD_CAIG_MASK (3ULL << 59)
+#define VTD_CCMD_FM(m) (((uint64_t)((m) & 3ULL)) << 32)
 #define VTD_CCMD_MASK_NOBIT 0
 #define VTD_CCMD_MASK_1BIT 1
 #define VTD_CCMD_MASK_2BIT 2
@@ -251,6 +251,68 @@ struct vtd_reg_desc {
     int size;
 };
 typedef struct vtd_reg_desc vtd_reg_desc;
+
+
+
+#define VTD_PAGE_SHIFT      (12)
+#define VTD_PAGE_SIZE       (1UL << VTD_PAGE_SHIFT)
+
+/* Root-Entry
+ * 0: Present
+ * 1-11: Reserved
+ * 12-63: Context-table Pointer
+ * 64-127: Reserved
+ */
+struct vtd_root_entry {
+    uint64_t val;
+    uint64_t rsvd;
+};
+typedef struct vtd_root_entry vtd_root_entry;
+
+/* Masks for struct vtd_root_entry */
+#define ROOT_ENTRY_P (1ULL << 0)
+#define ROOT_ENTRY_CTP  (~0xfffULL)
+
+#define ROOT_ENTRY_NR   (VTD_PAGE_SIZE / sizeof(vtd_root_entry))
+
+
+/* Context-Entry */
+struct vtd_context_entry {
+    uint64_t lo;
+    uint64_t hi;
+};
+typedef struct vtd_context_entry vtd_context_entry;
+
+/* Masks for struct vtd_context_entry */
+/* lo */
+#define CONTEXT_ENTRY_P (1ULL << 0)
+#define CONTEXT_ENTRY_FPD   (1ULL << 1) /* Fault Processing Disable */
+#define CONTEXT_ENTRY_TT    (3ULL << 2) /* Translation Type */
+#define CONTEXT_TT_MULTI_LEVEL  (0)
+#define CONTEXT_TT_DEV_IOTLB    (1)
+#define CONTEXT_TT_PASS_THROUGH (2)
+/* Second Level Page Translation Pointer*/
+#define CONTEXT_ENTRY_SLPTPTR   (~0xfffULL)
+
+/* hi */
+#define CONTEXT_ENTRY_AW    (7ULL) /* Adjusted guest-address-width */
+#define CONTEXT_ENTRY_DID   (0xffffULL << 8)    /* Domain Identifier */
+
+
+#define CONTEXT_ENTRY_NR    (VTD_PAGE_SIZE / sizeof(vtd_context_entry))
+
+
+/* Paging Structure common */
+#define PT_PAGE_SIZE_MASK   (1ULL << 7)
+
+/* Second Level Paging Structure */
+#define SL_PML4_LEVEL 4
+#define SL_PDP_LEVEL 3
+#define SL_PD_LEVEL 2
+#define SL_PT_LEVEL 1
+
+#define SL_PT_ENTRY_NR  512
+#define SL_PT_BASE_ADDR_MASK  (~(uint64_t)(VTD_PAGE_SIZE - 1))
 
 
 #endif
