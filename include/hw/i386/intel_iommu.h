@@ -115,6 +115,7 @@
 
 typedef struct intel_iommu_state {
     SysBusDevice busdev;
+    AddressSpace iommu_as;
     MemoryRegion csrmem;
     MemoryRegion iommu;
     uint8_t csr[DMAR_REG_SIZE];     /* register values */
@@ -253,7 +254,7 @@ struct vtd_reg_desc {
 typedef struct vtd_reg_desc vtd_reg_desc;
 
 
-
+/* Pagesize of VTD paging structures, including root and context tables */
 #define VTD_PAGE_SHIFT      (12)
 #define VTD_PAGE_SIZE       (1UL << VTD_PAGE_SHIFT)
 

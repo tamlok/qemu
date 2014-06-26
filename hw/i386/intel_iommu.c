@@ -233,9 +233,9 @@ static inline bool slpte_present(uint64_t slpte)
 /* Calculate the GPA given the base address, the index in the page table and
  * the level of this page table.
  */
-static inline uint64_t get_slpt_gpa(uint64_t addr, uint64_t index, int level)
+static inline uint64_t get_slpt_gpa(uint64_t addr, int index, int level)
 {
-    return (addr + (index << slpt_level_shift(level)));
+    return (addr + (((uint64_t)index) << slpt_level_shift(level)));
 }
 
 static inline uint64_t get_slpte_addr(uint64_t slpte)
@@ -313,7 +313,7 @@ static inline int gfn_level_offset(uint64_t gfn, int level)
 /* Iterate a Second Level Page Table */
 static void __walk_slpt(dma_addr_t table_addr, int level, uint64_t gpa)
 {
-    uint64_t index;
+    int index;
     uint64_t next_gpa;
     dma_addr_t next_table_addr;
     uint64_t slpte;
@@ -322,7 +322,7 @@ static void __walk_slpt(dma_addr_t table_addr, int level, uint64_t gpa)
         return;
     }
 
-    D("level %d, gpa 0x%lx", level, gpa);
+
     for (index = 0; index < SL_PT_ENTRY_NR; ++index) {
         if (dma_memory_read(&address_space_memory,
                             table_addr + index * sizeof(slpte), &slpte,
@@ -333,7 +333,7 @@ static void __walk_slpt(dma_addr_t table_addr, int level, uint64_t gpa)
         if (!slpte_present(slpte)) {
             continue;
         }
-
+        D("level %d, index 0x%x, gpa 0x%lx", level, index, gpa);
         next_gpa = get_slpt_gpa(gpa, index, level);
         next_table_addr = get_slpte_addr(slpte);
 
@@ -488,7 +488,7 @@ static uint64_t vtd_iotlb_flush(intel_iommu_state *s, uint64_t val)
         iaig = 0;
     }
 
-    print_root_table(s);
+    //print_root_table(s);
     return iaig;
 }
 
@@ -568,7 +568,7 @@ static void handle_gcmd_te(intel_iommu_state *s, bool en)
         /* Ok - report back to driver */
         set_mask_long(s, DMAR_GSTS_REG, VTD_GSTS_TES, 0);
     }
-    print_root_table(s);
+    //print_root_table(s);
 }
 
 /* Handle write to Global Command Register */
@@ -821,16 +821,36 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 }
 
 
-/*static IOMMUTLBEntry intel_iommu_translate(MemoryRegion *iommu, hwaddr addr)
+static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
 {
-    return (IOMMUTLBEntry) {
+    intel_iommu_state *s = container_of(iommu, intel_iommu_state, iommu);
+    IOMMUTLBEntry ret = {
         .target_as = &address_space_memory,
-        .iova = addr,
-        .translated_addr = addr,
-        .addr_mask = TARGET_PAGE_MASK,
-        .perm = IOMMU_RW,
+        .iova = 0,
+        .translated_addr = 0,
+        .addr_mask = ~(hwaddr)0,
+        .perm = IOMMU_NONE,
     };
-}*/
+
+    if (!(__get_long(s, DMAR_GSTS_REG) & VTD_GSTS_TES)) {
+        /* DMAR disabled, passthrough */
+        ret.iova = addr & TARGET_PAGE_MASK;
+        ret.translated_addr = addr & TARGET_PAGE_MASK;
+        ret.addr_mask = ~TARGET_PAGE_MASK;
+        ret.perm = IOMMU_RW;
+        D("translation passthrough addr 0x%lx target 0x%lx", addr,
+          ret.translated_addr);
+        return ret;
+    }
+
+    /* TODO: Add translation function */
+    ret.iova = addr & TARGET_PAGE_MASK;
+    ret.translated_addr = addr & TARGET_PAGE_MASK;
+    ret.addr_mask = ~TARGET_PAGE_MASK;
+    ret.perm = IOMMU_RW;
+
+    return ret;
+}
 
 static const VMStateDescription vtd_vmstate = {
     .name = "iommu_intel",
@@ -858,9 +878,9 @@ static const MemoryRegionOps vtd_mem_ops = {
     },
 };
 
-/*static MemoryRegionIOMMUOps intel_iommu_ops = {
-    .translate = intel_iommu_translate,
-};*/
+static MemoryRegionIOMMUOps vtd_iommu_ops = {
+    .translate = vtd_iommu_translate,
+};
 
 
 static Property iommu_properties[] = {
@@ -879,6 +899,9 @@ static int vtd_init(SysBusDevice *dev)
     intel_iommu_state *s = INTEL_IOMMU_DEVICE(dev);
     memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
                           "intel_iommu", DMAR_REG_SIZE);
+    memory_region_init_iommu(&s->iommu, OBJECT(s), &vtd_iommu_ops,
+                            "intel_iommu", ram_size);
+    address_space_init(&s->iommu_as, &s->iommu, "intel_iommu");
     D(" ");
 
     /* b.0:2 = 2: Number of domains supported: 256 using 8 bit ids

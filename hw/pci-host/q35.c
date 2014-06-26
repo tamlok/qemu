@@ -347,10 +347,17 @@ static void mch_reset(DeviceState *qdev)
     mch_update(mch);
 }
 
+static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
+{
+    intel_iommu_state *s = opaque;
+
+    return &s->iommu_as;
+}
 
 static void mch_init_dmar(MCHPCIState *mch)
 {
     Error *error = NULL;
+    PCIBus *pci_bus = PCI_BUS(qdev_get_parent_bus(DEVICE(mch)));
 
     mch->iommu = INTEL_IOMMU_DEVICE(object_new(TYPE_INTEL_IOMMU_DEVICE));
     object_initialize(mch->iommu, sizeof(*mch->iommu), TYPE_INTEL_IOMMU_DEVICE);
@@ -364,6 +371,7 @@ static void mch_init_dmar(MCHPCIState *mch)
 
     memory_region_add_subregion(mch->pci_address_space, Q35_HOST_BRIDGE_IOMMU_ADDR, 
                                 &mch->iommu->csrmem);
+    pci_setup_iommu(pci_bus, q35_host_dma_iommu, mch->iommu);
 }
 
 
