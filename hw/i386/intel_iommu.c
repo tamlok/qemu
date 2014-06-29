@@ -175,7 +175,7 @@ static bool get_root_entry(intel_iommu_state *s, int index, vtd_root_entry *re)
     if (index >= 0 && index < ROOT_ENTRY_NR) {
         addr = s->root + index * sizeof(*re);
         if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
-            fprintf(stderr, "(vtd) fail to read root table");
+            fprintf(stderr, "(vtd) fail to read root table\n");
             return false;
         }
         re->val = le64_to_cpu(re->val);
@@ -324,23 +324,18 @@ static void __walk_slpt(dma_addr_t table_addr, int level, uint64_t gpa)
 
 
     for (index = 0; index < SL_PT_ENTRY_NR; ++index) {
-        if (dma_memory_read(&address_space_memory,
-                            table_addr + index * sizeof(slpte), &slpte,
-                            sizeof(slpte))) {
-            fprintf(stderr, "(vtd) fail to read slpte\n");
-            return;
-        }
+        slpte = get_slpte(table_addr, index);
         if (!slpte_present(slpte)) {
             continue;
         }
-        D("level %d, index 0x%x, gpa 0x%lx", level, index, gpa);
+        D("level %d, index 0x%x, gpa 0x%"PRIx64, level, index, gpa);
         next_gpa = get_slpt_gpa(gpa, index, level);
         next_table_addr = get_slpte_addr(slpte);
 
         if (is_last_slpte(slpte, level)) {
-            D("slpte gpa 0x%lx, hpa 0x%lx", next_gpa, next_table_addr);
+            D("slpte gpa 0x%"PRIx64 ", hpa 0x%"PRIx64, next_gpa, next_table_addr);
             if (next_gpa != next_table_addr) {
-                D("Not 1:1 mapping, slpte 0x%lx", slpte);
+                D("Not 1:1 mapping, slpte 0x%"PRIx64, slpte);
             }
         } else {
             __walk_slpt(next_table_addr, level - 1, next_gpa);
@@ -368,12 +363,13 @@ static void print_root_table(intel_iommu_state *s)
 
     for (i = 0; i < ROOT_ENTRY_NR; ++i) {
         if (get_root_entry(s, i, &re) && root_entry_present(&re)) {
-            D("root_entry 0x%x: hi 0x%lx low 0x%lx", i, re.rsvd, re.val);
+            D("root_entry 0x%x: hi 0x%"PRIx64 " low 0x%"PRIx64, i, re.rsvd, re.val);
 
             for (j = 0; j < CONTEXT_ENTRY_NR; ++j) {
                 if (get_context_entry_from_root(&re, j, &ce)
                     && context_entry_present(&ce)) {
-                    D("context_entry 0x%x: hi 0x%lx low 0x%lx", j, ce.hi, ce.lo);
+                    D("context_entry 0x%x: hi 0x%"PRIx64 " low 0x%"PRIx64,
+                      j, ce.hi, ce.lo);
                     D("--------------------------------");
                     print_paging_structure_from_context(&ce);
                 }
@@ -419,7 +415,8 @@ static void vtd_root_table_setup(intel_iommu_state *s)
     s->root = *((uint64_t *)&s->csr[DMAR_RTADDR_REG]);
     s->extended = s->root & VTD_RTADDR_RTT;
     s->root &= ~0xfff;
-    D("root_table addr 0x%lx %s", s->root, (s->extended ? "(Extended)" : ""));
+    D("root_table addr 0x%"PRIx64 " %s", s->root,
+      (s->extended ? "(Extended)" : ""));
 }
 
 /* Context-cache invalidation
@@ -624,7 +621,7 @@ static void handle_ccmd_write(intel_iommu_state *s)
         /* Invalidation completed. Change something to show */
         set_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_ICC, 0ULL);
         ret = set_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_CAIG_MASK, ret);
-        D("CCMD_REG write-back val: 0x%lx", ret);
+        D("CCMD_REG write-back val: 0x%"PRIx64, ret);
     }
 }
 
@@ -641,7 +638,7 @@ static void handle_iotlb_write(intel_iommu_state *s)
         /* Invalidation completed. Change something to show */
         set_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_IVT, 0ULL);
         ret = set_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_FLUSH_GRANU_MASK_A, ret);
-        D("IOTLB_REG write-back val: 0x%lx", ret);
+        D("IOTLB_REG write-back val: 0x%"PRIx64, ret);
     }
 }
 
@@ -652,7 +649,7 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
     uint64_t val;
 
     if (addr + size > DMAR_REG_SIZE) {
-        D("addr outside region: max 0x%x, got 0x%lx %d", DMAR_REG_SIZE,
+        D("addr outside region: max 0x%x, got 0x%"PRIx64 " %d", DMAR_REG_SIZE,
           addr, size);
         return (uint64_t)-1;
     }
@@ -677,12 +674,12 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
     default:
         if (size == 4) {
             val = get_long(s, addr);
-        } else if (size == 8) {
+        } else {
             val = get_quad(s, addr);
         }
     }
 
-    D("addr 0x%lx size %d val 0x%lx", addr, size, val);
+    D("addr 0x%"PRIx64 " size %d val 0x%"PRIx64, addr, size, val);
     return val;
 }
 
@@ -692,7 +689,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     intel_iommu_state *s = opaque;
 
     if (addr + size > DMAR_REG_SIZE) {
-        D("addr outside region: max 0x%x, got 0x%lx %d", DMAR_REG_SIZE,
+        D("addr outside region: max 0x%x, got 0x%"PRIx64 " %d", DMAR_REG_SIZE,
           addr, size);
         return;
     }
@@ -707,8 +704,8 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     switch (addr) {
     /* Global Command Register, 32-bit */
     case DMAR_GCMD_REG:
-        D("DMAR_GCMD_REG write addr 0x%lx, size %d, val 0x%lx", addr, size,
-          val);
+        D("DMAR_GCMD_REG write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
+          addr, size, val);
         handle_gcmd_write(s, val);
         break;
 
@@ -733,8 +730,8 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 */
     /* Context Command Register, 64-bit */
     case DMAR_CCMD_REG:
-        D("DMAR_CCMD_REG write addr 0x%lx, size %d, val 0x%lx", addr, size,
-          val);
+        D("DMAR_CCMD_REG write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
+          addr, size,val);
         if (size == 4) {
             set_long(s, addr, val);
         } else {
@@ -744,8 +741,8 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_CCMD_REG_HI:
-        D("DMAR_CCMD_REG_HI write addr 0x%lx, size %d, val 0x%lx", addr, size,
-          val);
+        D("DMAR_CCMD_REG_HI write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
+          addr, size, val);
         assert(size == 4);
         set_long(s, addr, val);
         handle_ccmd_write(s);
@@ -754,8 +751,8 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* IOTLB Invalidation Register, 64-bit */
     case DMAR_IOTLB_REG:
-        D("DMAR_IOTLB_REG write addr 0x%lx, size %d, val 0x%lx", addr, size,
-          val);
+        D("DMAR_IOTLB_REG write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
+          addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
         } else {
@@ -765,8 +762,8 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_IOTLB_REG_HI:
-        D("DMAR_IOTLB_REG_HI write addr 0x%lx, size %d, val 0x%lx", addr, size,
-          val);
+        D("DMAR_IOTLB_REG_HI write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
+          addr, size, val);
         assert(size == 4);
         set_long(s, addr, val);
         handle_iotlb_write(s);
@@ -784,16 +781,16 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_FECTL_REG:
     /* Protected Memory Enable Register, 32-bit */
     case DMAR_PMEN_REG:
-        D("Known reg write addr 0x%lx, size %d, val 0x%lx", addr, size,
-          val);
+        D("Known reg write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
+          addr, size, val);
         set_long(s, addr, val);
         break;
 
 
     /* Root Table Address Register, 64-bit */
     case DMAR_RTADDR_REG:
-        D("DMAR_RTADDR_REG write addr 0x%lx, size %d, val 0x%lx", addr, size,
-          val);
+        D("DMAR_RTADDR_REG write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
+          addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
         }else {
@@ -802,15 +799,15 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_RTADDR_REG_HI:
-        D("DMAR_RTADDR_REG_HI write addr 0x%lx, size %d, val 0x%lx", addr, size,
-          val);
+        D("DMAR_RTADDR_REG_HI write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
+          addr, size, val);
         assert(size == 4);
         set_long(s, addr, val);
         break;
 
     default:
-        D("Unhandled reg write addr 0x%lx, size %d, val 0x%lx", addr, size,
-          val);
+        D("Unhandled reg write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
+          addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
         } else {
@@ -838,7 +835,7 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
         ret.translated_addr = addr & TARGET_PAGE_MASK;
         ret.addr_mask = ~TARGET_PAGE_MASK;
         ret.perm = IOMMU_RW;
-        D("translation passthrough addr 0x%lx target 0x%lx", addr,
+        D("translation passthrough addr 0x%"PRIx64 " target 0x%"PRIx64, addr,
           ret.translated_addr);
         return ret;
     }
@@ -897,6 +894,12 @@ static void vtd_reset(DeviceState *d)
 static int vtd_init(SysBusDevice *dev)
 {
     intel_iommu_state *s = INTEL_IOMMU_DEVICE(dev);
+
+    memset(s->csr, 0, DMAR_REG_SIZE);
+    memset(s->wmask, 0, DMAR_REG_SIZE);
+    memset(s->w1cmask, 0, DMAR_REG_SIZE);
+    memset(s->womask, 0, DMAR_REG_SIZE);
+
     memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
                           "intel_iommu", DMAR_REG_SIZE);
     memory_region_init_iommu(&s->iommu, OBJECT(s), &vtd_iommu_ops,
