@@ -25,7 +25,7 @@
 #define DEBUG_INTEL_IOMMU
 #ifdef DEBUG_INTEL_IOMMU
 #define D(fmt, ...) \
-    do { fprintf(stderr, "(vtd)%s, %s: " fmt "\n", __FILE__, __func__, \
+    do { fprintf(stderr, "(vtd)%s: " fmt "\n", __func__, \
                  ## __VA_ARGS__); } while (0)
 #else
 #define D(fmt, ...) \
@@ -278,25 +278,66 @@ static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
     return slpte;
 }
 
-
-static inline int gfn_level_offset(uint64_t gfn, int level)
+static inline void print_slpt(dma_addr_t base_addr)
 {
-    uint64_t gpa = gfn << 12;
+    int i;
+    uint64_t slpte;
+
+    D("slpt at addr 0x%"PRIx64 "===========", base_addr);
+    for (i = 0; i < SL_PT_ENTRY_NR; i++) {
+        slpte = get_slpte(base_addr, i);
+        D("slpte #%d 0x%"PRIx64, i, slpte);
+    }
+}
+
+static void print_root_table(intel_iommu_state *s)
+{
+    int i;
+    vtd_root_entry re;
+    D("root-table=====================");
+    for (i = 0; i < ROOT_ENTRY_NR; ++i) {
+        get_root_entry(s, i, &re);
+        if (root_entry_present(&re)) {
+            D("root-entry #%d hi 0x%"PRIx64 " low 0x%"PRIx64, i, re.rsvd,
+              re.val);
+        }
+    }
+}
+
+static void print_context_table(vtd_root_entry *re)
+{
+    int i;
+    vtd_context_entry ce;
+    D("context-table==================");
+    for (i = 0; i < CONTEXT_ENTRY_NR; ++i) {
+        get_context_entry_from_root(re, i, &ce);
+        if (context_entry_present(&ce)) {
+            D("context-entry #%d hi 0x%"PRIx64 " low 0x%"PRIx64, i, ce.hi,
+              ce.lo);
+        }
+    }
+}
+
+static inline int gpa_level_offset(uint64_t gpa, int level)
+{
     return ((gpa >> slpt_level_shift(level)) & ((1ULL << SLPT_LEVEL_BITS) - 1));
 }
 
-/*static uint64_t gfn_to_slpte(vtd_context_entry *ce, uint64_t gfn)
+static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa)
 {
     dma_addr_t addr = get_slpt_base_from_context(ce);
     int level = SL_PDP_LEVEL;
     int offset;
     uint64_t slpte;
 
-
+    D("slpt_base 0x%"PRIx64, addr);
     while (true) {
-        offset = gfn_level_offset(gfn, level);
+        print_slpt(addr);
+        offset = gpa_level_offset(gpa, level);
         slpte = get_slpte(addr, offset);
+        D("level %d slpte 0x%"PRIx64, level, slpte);
         if (!slpte_present(slpte)) {
+            D("slpte 0x%"PRIx64 " is not present", slpte);
             slpte = (uint64_t)-1;
             break;
         }
@@ -307,8 +348,54 @@ static inline int gfn_level_offset(uint64_t gfn, int level)
         level--;
     }
     return slpte;
-}*/
+}
 
+/* Do a paging-structures walk to do a iommu translation
+ * @bus_num: The bus number
+ * @devfn: The devfn, which is the  combined of device and function number
+ * @entry: IOMMUTLBEntry that contain the addr to be translated and result
+ */
+static void iommu_translate(intel_iommu_state *s, int bus_num, int devfn,
+                              IOMMUTLBEntry *entry)
+{
+    vtd_root_entry re;
+    vtd_context_entry ce;
+    uint64_t slpte;
+    hwaddr gpa = entry->iova;
+
+    print_root_table(s);
+    if (!get_root_entry(s, bus_num, &re)) {
+        /* Fixme */
+        return;
+    }
+    if (!root_entry_present(&re)) {
+        /* Fixme */
+        D("Root-entry #%d is not present", bus_num);
+        return;
+    }
+    D("root-entry low 0x%"PRIx64, re.val);
+    print_context_table(&re);
+    if (!get_context_entry_from_root(&re, devfn, &ce)) {
+        /* Fixme */
+        return;
+    }
+    if (!context_entry_present(&ce)) {
+        /* Fixme */
+        D("Context-entry #%d(bus #%d) is not present", devfn, bus_num);
+        return;
+    }
+    D("context-entry hi 0x%"PRIx64 " low 0x%"PRIx64, ce.hi, ce.lo);
+    slpte = gpa_to_slpte(&ce, gpa);
+    if (slpte == (uint64_t)-1) {
+        /* Fixme */
+        D("Can't get slpte for gpa %"PRIx64, gpa);
+        return;
+    }
+    /* Fixme */
+    entry->translated_addr = get_slpte_addr(slpte) & TARGET_PAGE_MASK;
+    entry->perm = IOMMU_RW;
+
+}
 
 /* Iterate a Second Level Page Table */
 static void __walk_slpt(dma_addr_t table_addr, int level, uint64_t gpa)
@@ -354,7 +441,7 @@ static void print_paging_structure_from_context(vtd_context_entry *ce)
 }
 
 
-static void print_root_table(intel_iommu_state *s)
+static void print_root_table_all(intel_iommu_state *s)
 {
     int i;
     int j;
@@ -820,32 +907,37 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
 static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
 {
-    intel_iommu_state *s = container_of(iommu, intel_iommu_state, iommu);
+    vtd_address_space *vtd_as = container_of(iommu, vtd_address_space, iommu);
+    intel_iommu_state *s = vtd_as->iommu_state;
+    int bus_num = vtd_as->bus_num;
+    int devfn = vtd_as->devfn;
     IOMMUTLBEntry ret = {
         .target_as = &address_space_memory,
-        .iova = 0,
+        .iova = addr & TARGET_PAGE_MASK,
         .translated_addr = 0,
-        .addr_mask = ~(hwaddr)0,
+        .addr_mask = ~TARGET_PAGE_MASK,
         .perm = IOMMU_NONE,
     };
 
     if (!(__get_long(s, DMAR_GSTS_REG) & VTD_GSTS_TES)) {
         /* DMAR disabled, passthrough */
-        ret.iova = addr & TARGET_PAGE_MASK;
         ret.translated_addr = addr & TARGET_PAGE_MASK;
-        ret.addr_mask = ~TARGET_PAGE_MASK;
         ret.perm = IOMMU_RW;
-        D("translation passthrough addr 0x%"PRIx64 " target 0x%"PRIx64, addr,
-          ret.translated_addr);
         return ret;
     }
 
-    /* TODO: Add translation function */
-    ret.iova = addr & TARGET_PAGE_MASK;
-    ret.translated_addr = addr & TARGET_PAGE_MASK;
-    ret.addr_mask = ~TARGET_PAGE_MASK;
-    ret.perm = IOMMU_RW;
+    D("bus %d slot %d func %d devfn %d addr %"PRIx64 " iova %"PRIx64,
+      bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
+      ret.iova);
 
+    iommu_translate(s, bus_num, devfn, &ret);
+
+/*    D("=========================================");
+    print_root_table_all(s);*/
+
+    D("bus %d slot %d func %d devfn %d addr %"PRIx64 " to_addr %"PRIx64,
+      bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
+      ret.translated_addr);
     return ret;
 }
 
@@ -875,10 +967,6 @@ static const MemoryRegionOps vtd_mem_ops = {
     },
 };
 
-static MemoryRegionIOMMUOps vtd_iommu_ops = {
-    .translate = vtd_iommu_translate,
-};
-
 
 static Property iommu_properties[] = {
     DEFINE_PROP_UINT32("version", intel_iommu_state, version, 0),
@@ -899,13 +987,11 @@ static int vtd_init(SysBusDevice *dev)
     memset(s->wmask, 0, DMAR_REG_SIZE);
     memset(s->w1cmask, 0, DMAR_REG_SIZE);
     memset(s->womask, 0, DMAR_REG_SIZE);
+    memset(s->address_spaces, 0, sizeof(s->address_spaces));
 
+    s->iommu_ops.translate = vtd_iommu_translate;
     memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
                           "intel_iommu", DMAR_REG_SIZE);
-    memory_region_init_iommu(&s->iommu, OBJECT(s), &vtd_iommu_ops,
-                            "intel_iommu", ram_size);
-    address_space_init(&s->iommu_as, &s->iommu, "intel_iommu");
-    D(" ");
 
     /* b.0:2 = 2: Number of domains supported: 256 using 8 bit ids
      * b.3   = 0: No advanced fault logging

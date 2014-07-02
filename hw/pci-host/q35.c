@@ -350,8 +350,29 @@ static void mch_reset(DeviceState *qdev)
 static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
 {
     intel_iommu_state *s = opaque;
+    vtd_address_space *vtd_as;
+    int bus_num = pci_bus_num(bus);
+    int slot = PCI_SLOT(devfn);
+    int func = PCI_FUNC(devfn);
 
-    return &s->iommu_as;
+    assert(devfn >= 0);
+
+    vtd_as = s->address_spaces[bus_num][devfn];
+    if (!vtd_as) {
+        vtd_as = g_malloc(sizeof(*vtd_as)); /* No corresponding free() */
+        vtd_as->bus_num = bus_num;
+        vtd_as->devfn = devfn;
+        vtd_as->iommu_state = s;
+        memory_region_init_iommu(&(vtd_as->iommu), OBJECT(s), &(s->iommu_ops),
+                                "intel_iommu", UINT64_MAX);
+        address_space_init(&(vtd_as->as), &(vtd_as->iommu), "intel_iommu");
+        s->address_spaces[bus_num][devfn] = vtd_as;
+    }
+
+    fprintf(stderr, "vtd bus %d slot %d func %d devfn %d vtd_as: 0x%lx\n",
+            bus_num, slot, func, devfn, (uint64_t)vtd_as);
+
+    return &(vtd_as->as);
 }
 
 static void mch_init_dmar(MCHPCIState *mch)

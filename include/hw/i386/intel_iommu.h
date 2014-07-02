@@ -111,13 +111,26 @@
 
 #define DMAR_REG_SIZE   (DMAR_FRCD_REG_OFFSET + 128 * DMAR_FRCD_REG_NR)
 
-/* The iommu (DMAR) device state struct */
+#define VTD_PCI_BUS_MAX 256
+#define VTD_PCI_SLOT_MAX 32
+#define VTD_PCI_FUNC_MAX 8
+#define VTD_PCI_SLOT(devfn)         (((devfn) >> 3) & 0x1f)
+#define VTD_PCI_FUNC(devfn)         ((devfn) & 0x07)
 
+typedef struct intel_iommu_state intel_iommu_state;
+
+typedef struct vtd_address_space {
+    int bus_num;
+    int devfn;
+    AddressSpace as;
+    MemoryRegion iommu;
+    intel_iommu_state *iommu_state;
+} vtd_address_space;
+
+/* The iommu (DMAR) device state struct */
 typedef struct intel_iommu_state {
     SysBusDevice busdev;
-    AddressSpace iommu_as;
     MemoryRegion csrmem;
-    MemoryRegion iommu;
     uint8_t csr[DMAR_REG_SIZE];     /* register values */
     uint8_t wmask[DMAR_REG_SIZE];   /* R/W bytes */
     uint8_t w1cmask[DMAR_REG_SIZE]; /* RW1C(Write 1 to Clear) bytes */
@@ -131,6 +144,10 @@ typedef struct intel_iommu_state {
     dma_addr_t iq;   /* Current invalidation queue (IQ) pointer */
     size_t iq_sz;    /* IQ Size in number of entries */
     bool iq_enable;  /* Set if the IQ is enabled */
+
+    MemoryRegionIOMMUOps iommu_ops;
+    vtd_address_space *address_spaces[VTD_PCI_BUS_MAX]
+                                       [VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX];
 } intel_iommu_state;
 
 
