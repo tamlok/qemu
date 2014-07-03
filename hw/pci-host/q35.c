@@ -381,7 +381,6 @@ static void mch_init_dmar(MCHPCIState *mch)
     PCIBus *pci_bus = PCI_BUS(qdev_get_parent_bus(DEVICE(mch)));
 
     mch->iommu = INTEL_IOMMU_DEVICE(object_new(TYPE_INTEL_IOMMU_DEVICE));
-    object_initialize(mch->iommu, sizeof(*mch->iommu), TYPE_INTEL_IOMMU_DEVICE);
     object_property_set_bool(OBJECT(mch->iommu), true, "realized", &error);
 
     if (error) {
