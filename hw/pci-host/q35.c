@@ -350,28 +350,43 @@ static void mch_reset(DeviceState *qdev)
 static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
 {
     intel_iommu_state *s = opaque;
+    vtd_address_space **pvtd_as;
     vtd_address_space *vtd_as;
     int bus_num = pci_bus_num(bus);
-    int slot = PCI_SLOT(devfn);
-    int func = PCI_FUNC(devfn);
 
     assert(devfn >= 0);
 
-    vtd_as = s->address_spaces[bus_num][devfn];
+    pvtd_as = s->address_spaces[bus_num];
+    if (!pvtd_as) {
+        /* No corresponding free() */
+        pvtd_as = g_malloc0(sizeof(vtd_address_space *) *
+                          VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX);
+        if (!pvtd_as) {
+            fprintf(stderr, "error: q35 fail to alloc memory for vtd\n");
+            abort();
+        }
+        s->address_spaces[bus_num] = pvtd_as;
+    }
+
+    vtd_as = *(pvtd_as + devfn);
     if (!vtd_as) {
-        vtd_as = g_malloc(sizeof(*vtd_as)); /* No corresponding free() */
+        vtd_as = g_malloc0(sizeof(*vtd_as));
+        if (!vtd_as) {
+            fprintf(stderr, "error: q35 fail to alloc memory for vtd\n");
+            abort();
+        }
+        *(pvtd_as + devfn) = vtd_as;
+
         vtd_as->bus_num = bus_num;
         vtd_as->devfn = devfn;
         vtd_as->iommu_state = s;
         memory_region_init_iommu(&(vtd_as->iommu), OBJECT(s), &(s->iommu_ops),
                                 "intel_iommu", UINT64_MAX);
         address_space_init(&(vtd_as->as), &(vtd_as->iommu), "intel_iommu");
-        s->address_spaces[bus_num][devfn] = vtd_as;
     }
 
-    fprintf(stderr, "vtd bus %d slot %d func %d devfn %d vtd_as: 0x%lx\n",
-            bus_num, slot, func, devfn, (uint64_t)vtd_as);
-
+    fprintf(stderr, "bus %d slot %d func %d devfn %d request address space\n",
+            bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), devfn);
     return &(vtd_as->as);
 }
 

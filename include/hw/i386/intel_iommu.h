@@ -146,8 +146,7 @@ typedef struct intel_iommu_state {
     bool iq_enable;  /* Set if the IQ is enabled */
 
     MemoryRegionIOMMUOps iommu_ops;
-    vtd_address_space *address_spaces[VTD_PCI_BUS_MAX]
-                                       [VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX];
+    vtd_address_space **address_spaces[VTD_PCI_BUS_MAX];
 } intel_iommu_state;
 
 
