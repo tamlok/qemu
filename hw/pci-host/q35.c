@@ -349,7 +349,7 @@ static void mch_reset(DeviceState *qdev)
 
 static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
 {
-    intel_iommu_state *s = opaque;
+    IntelIOMMUState *s = opaque;
     vtd_address_space **pvtd_as;
     vtd_address_space *vtd_as;
     int bus_num = pci_bus_num(bus);

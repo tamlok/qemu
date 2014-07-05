@@ -66,7 +66,7 @@ static bool is_reserved(uint32_t offset, int size)
     return false;
 }
 
-static inline void define_quad(intel_iommu_state *s, hwaddr addr, uint64_t val,
+static inline void define_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val,
                         uint64_t wmask, uint64_t w1cmask)
 {
     *((uint64_t *)&s->csr[addr]) = val;
@@ -74,13 +74,13 @@ static inline void define_quad(intel_iommu_state *s, hwaddr addr, uint64_t val,
     *((uint64_t *)&s->w1cmask[addr]) = w1cmask;
 }
 
-static inline void define_quad_wo(intel_iommu_state *s, hwaddr addr,
+static inline void define_quad_wo(IntelIOMMUState *s, hwaddr addr,
                                   uint64_t mask)
 {
     *((uint64_t *)&s->womask[addr]) = mask;
 }
 
-static inline void define_long(intel_iommu_state *s, hwaddr addr, uint32_t val,
+static inline void define_long(IntelIOMMUState *s, hwaddr addr, uint32_t val,
                         uint32_t wmask, uint32_t w1cmask)
 {
     *((uint32_t *)&s->csr[addr]) = val;
@@ -88,14 +88,14 @@ static inline void define_long(intel_iommu_state *s, hwaddr addr, uint32_t val,
     *((uint32_t *)&s->w1cmask[addr]) = w1cmask;
 }
 
-static inline void define_long_wo(intel_iommu_state *s, hwaddr addr,
+static inline void define_long_wo(IntelIOMMUState *s, hwaddr addr,
                                   uint32_t mask)
 {
     *((uint32_t *)&s->womask[addr]) = mask;
 }
 
 /* "External" get/set operations */
-static inline void set_quad(intel_iommu_state *s, hwaddr addr, uint64_t val)
+static inline void set_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val)
 {
     uint64_t oldval = *((uint64_t *)&s->csr[addr]);
     uint64_t wmask = *((uint64_t *)&s->wmask[addr]);
@@ -104,7 +104,7 @@ static inline void set_quad(intel_iommu_state *s, hwaddr addr, uint64_t val)
         ((oldval & ~wmask) | (val & wmask)) & ~(w1cmask & val);
 }
 
-static inline void set_long(intel_iommu_state *s, hwaddr addr, uint32_t val)
+static inline void set_long(IntelIOMMUState *s, hwaddr addr, uint32_t val)
 {
     uint32_t oldval = *((uint32_t *)&s->csr[addr]);
     uint32_t wmask = *((uint32_t *)&s->wmask[addr]);
@@ -113,7 +113,7 @@ static inline void set_long(intel_iommu_state *s, hwaddr addr, uint32_t val)
         ((oldval & ~wmask) | (val & wmask)) & ~(w1cmask & val);
 }
 
-static inline uint64_t get_quad(intel_iommu_state *s, hwaddr addr)
+static inline uint64_t get_quad(IntelIOMMUState *s, hwaddr addr)
 {
     uint64_t val = *((uint64_t *)&s->csr[addr]);
     uint64_t womask = *((uint64_t *)&s->womask[addr]);
@@ -121,7 +121,7 @@ static inline uint64_t get_quad(intel_iommu_state *s, hwaddr addr)
 }
 
 
-static inline uint32_t get_long(intel_iommu_state *s, hwaddr addr)
+static inline uint32_t get_long(IntelIOMMUState *s, hwaddr addr)
 {
     uint32_t val = *((uint32_t *)&s->csr[addr]);
     uint32_t womask = *((uint32_t *)&s->womask[addr]);
@@ -130,12 +130,12 @@ static inline uint32_t get_long(intel_iommu_state *s, hwaddr addr)
 
 
 /* "Internal" get/set operations */
-static inline uint64_t __get_quad(intel_iommu_state *s, hwaddr addr)
+static inline uint64_t __get_quad(IntelIOMMUState *s, hwaddr addr)
 {
     return *((uint64_t *)&s->csr[addr]);
 }
 
-static inline uint32_t __get_long(intel_iommu_state *s, hwaddr addr)
+static inline uint32_t __get_long(IntelIOMMUState *s, hwaddr addr)
 {
     return *((uint32_t *)&s->csr[addr]);
 }
@@ -143,7 +143,7 @@ static inline uint32_t __get_long(intel_iommu_state *s, hwaddr addr)
 
 
 /* val = (val & ~clear) | mask */
-static inline uint32_t set_mask_long(intel_iommu_state *s, hwaddr addr,
+static inline uint32_t set_mask_long(IntelIOMMUState *s, hwaddr addr,
                                      uint32_t clear, uint32_t mask)
 {
     uint32_t *ptr = (uint32_t *)&s->csr[addr];
@@ -153,7 +153,7 @@ static inline uint32_t set_mask_long(intel_iommu_state *s, hwaddr addr,
 }
 
 /* val = (val & ~clear) | mask */
-static inline uint64_t set_mask_quad(intel_iommu_state *s, hwaddr addr,
+static inline uint64_t set_mask_quad(IntelIOMMUState *s, hwaddr addr,
                                      uint64_t clear, uint64_t mask)
 {
     uint64_t *ptr = (uint64_t *)&s->csr[addr];
@@ -169,7 +169,7 @@ static inline bool root_entry_present(vtd_root_entry* root)
 }
 
 
-static bool get_root_entry(intel_iommu_state *s, int index, vtd_root_entry *re)
+static bool get_root_entry(IntelIOMMUState *s, int index, vtd_root_entry *re)
 {
     dma_addr_t addr;
     if (index >= 0 && index < ROOT_ENTRY_NR) {
@@ -290,7 +290,7 @@ static inline void print_slpt(dma_addr_t base_addr)
     }
 }
 
-static void print_root_table(intel_iommu_state *s)
+static void print_root_table(IntelIOMMUState *s)
 {
     int i;
     vtd_root_entry re;
@@ -355,7 +355,7 @@ static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa)
  * @devfn: The devfn, which is the  combined of device and function number
  * @entry: IOMMUTLBEntry that contain the addr to be translated and result
  */
-static void iommu_translate(intel_iommu_state *s, int bus_num, int devfn,
+static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
                               IOMMUTLBEntry *entry)
 {
     vtd_root_entry re;
@@ -441,7 +441,7 @@ static void print_paging_structure_from_context(vtd_context_entry *ce)
 }
 
 
-static void print_root_table_all(intel_iommu_state *s)
+static void print_root_table_all(IntelIOMMUState *s)
 {
     int i;
     int j;
@@ -468,7 +468,7 @@ static void print_root_table_all(intel_iommu_state *s)
 
 
 
-static void iommu_inv_queue_setup(intel_iommu_state *s)
+static void iommu_inv_queue_setup(IntelIOMMUState *s)
 {
     uint64_t tail_val;
     s->iq = *((uint64_t *)&s->csr[DMAR_IQA_REG]);
@@ -484,7 +484,7 @@ static void iommu_inv_queue_setup(intel_iommu_state *s)
 }
 
 
-static void handle_gcmd_qie(intel_iommu_state *s, bool en)
+static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
 {
     D("Queued Invalidation Enable %s", (en ? "on" : "off"));
 
@@ -497,7 +497,7 @@ static void handle_gcmd_qie(intel_iommu_state *s, bool en)
 }
 
 
-static void vtd_root_table_setup(intel_iommu_state *s)
+static void vtd_root_table_setup(IntelIOMMUState *s)
 {
     s->root = *((uint64_t *)&s->csr[DMAR_RTADDR_REG]);
     s->extended = s->root & VTD_RTADDR_RTT;
@@ -510,7 +510,7 @@ static void vtd_root_table_setup(intel_iommu_state *s)
  * Returns the Context Actual Invalidation Granularity.
  * @val: the content of the CCMD_REG
  */
-static uint64_t vtd_context_cache_invalidate(intel_iommu_state *s, uint64_t val)
+static uint64_t vtd_context_cache_invalidate(IntelIOMMUState *s, uint64_t val)
 {
     uint64_t caig;
     uint64_t type = val & VTD_CCMD_CIRG_MASK;
@@ -546,7 +546,7 @@ static uint64_t vtd_context_cache_invalidate(intel_iommu_state *s, uint64_t val)
  * Returns the IOTLB Actual Invalidation Granularity.
  * @val: the content of the IOTLB_REG
  */
-static uint64_t vtd_iotlb_flush(intel_iommu_state *s, uint64_t val)
+static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
 {
     uint64_t iaig;
     uint64_t type = val & VTD_TLB_FLUSH_GRANU_MASK;
@@ -576,7 +576,7 @@ static uint64_t vtd_iotlb_flush(intel_iommu_state *s, uint64_t val)
     return iaig;
 }
 
-/*static int handle_invalidate(intel_iommu_state *s, uint16_t i)
+/*static int handle_invalidate(IntelIOMMUState *s, uint16_t i)
 {
     intel_iommu_inv_desc entry;
     uint8_t type;
@@ -606,7 +606,7 @@ static uint64_t vtd_iotlb_flush(intel_iommu_state *s, uint64_t val)
 }*/
 
 
-/*static void handle_iqt_write(intel_iommu_state *s, uint64_t val)
+/*static void handle_iqt_write(IntelIOMMUState *s, uint64_t val)
 {
     s->iq_tail = (val >> 4) & 0x7fff;
     D("Write to IQT_REG new tail = %d", s->iq_tail);
@@ -628,7 +628,7 @@ static uint64_t vtd_iotlb_flush(intel_iommu_state *s, uint64_t val)
 }*/
 
 /* Set Root Table Pointer */
-static void handle_gcmd_srtp(intel_iommu_state *s, bool en)
+static void handle_gcmd_srtp(IntelIOMMUState *s, bool en)
 {
     D("Set Root Table Pointer %s", (en ? "on" : "off"));
     /* if @en is false, that is, clearing this bit, it has no effect. */
@@ -641,7 +641,7 @@ static void handle_gcmd_srtp(intel_iommu_state *s, bool en)
 
 
 /* Handle Translation Enable/Disable */
-static void handle_gcmd_te(intel_iommu_state *s, bool en)
+static void handle_gcmd_te(IntelIOMMUState *s, bool en)
 {
     D("Translation Enable %s", (en ? "on" : "off"));
 
@@ -656,7 +656,7 @@ static void handle_gcmd_te(intel_iommu_state *s, bool en)
 }
 
 /* Handle write to Global Command Register */
-static void handle_gcmd_write(intel_iommu_state *s, uint32_t val)
+static void handle_gcmd_write(IntelIOMMUState *s, uint32_t val)
 {
     uint32_t oldval = __get_long(s, DMAR_GCMD_REG);
     uint32_t changed = oldval ^ val;
@@ -696,7 +696,7 @@ static void handle_gcmd_write(intel_iommu_state *s, uint32_t val)
 }
 
 /* Handle write to Context Command Register */
-static void handle_ccmd_write(intel_iommu_state *s)
+static void handle_ccmd_write(IntelIOMMUState *s)
 {
     uint64_t ret;
     uint64_t val = __get_quad(s, DMAR_CCMD_REG);
@@ -713,7 +713,7 @@ static void handle_ccmd_write(intel_iommu_state *s)
 }
 
 /* Handle write to IOTLB Invalidation Register */
-static void handle_iotlb_write(intel_iommu_state *s)
+static void handle_iotlb_write(IntelIOMMUState *s)
 {
     uint64_t ret;
     uint64_t val = __get_quad(s, DMAR_IOTLB_REG);
@@ -732,7 +732,7 @@ static void handle_iotlb_write(intel_iommu_state *s)
 
 static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
 {
-    intel_iommu_state *s = opaque;
+    IntelIOMMUState *s = opaque;
     uint64_t val;
 
     if (addr + size > DMAR_REG_SIZE) {
@@ -773,7 +773,7 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
 static void vtd_mem_write(void *opaque, hwaddr addr,
                           uint64_t val, unsigned size)
 {
-    intel_iommu_state *s = opaque;
+    IntelIOMMUState *s = opaque;
 
     if (addr + size > DMAR_REG_SIZE) {
         D("addr outside region: max 0x%x, got 0x%"PRIx64 " %d", DMAR_REG_SIZE,
@@ -908,7 +908,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
 {
     vtd_address_space *vtd_as = container_of(iommu, vtd_address_space, iommu);
-    intel_iommu_state *s = vtd_as->iommu_state;
+    IntelIOMMUState *s = vtd_as->iommu_state;
     int bus_num = vtd_as->bus_num;
     int devfn = vtd_as->devfn;
     IOMMUTLBEntry ret = {
@@ -947,7 +947,7 @@ static const VMStateDescription vtd_vmstate = {
     .minimum_version_id = 1,
     .minimum_version_id_old = 1,
     .fields      = (VMStateField[]) {
-        VMSTATE_UINT8_ARRAY(csr, intel_iommu_state, DMAR_REG_SIZE),
+        VMSTATE_UINT8_ARRAY(csr, IntelIOMMUState, DMAR_REG_SIZE),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -969,19 +969,19 @@ static const MemoryRegionOps vtd_mem_ops = {
 
 
 static Property iommu_properties[] = {
-    DEFINE_PROP_UINT32("version", intel_iommu_state, version, 0),
+    DEFINE_PROP_UINT32("version", IntelIOMMUState, version, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
 static void vtd_reset(DeviceState *d)
 {
-    /* intel_iommu_state *s = INTEL_IOMMU_DEVICE(d); */
+    /* IntelIOMMUState *s = INTEL_IOMMU_DEVICE(d); */
     D(" ");
 }
 
 static int vtd_init(SysBusDevice *dev)
 {
-    intel_iommu_state *s = INTEL_IOMMU_DEVICE(dev);
+    IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
 
     memset(s->csr, 0, DMAR_REG_SIZE);
     memset(s->wmask, 0, DMAR_REG_SIZE);
@@ -1105,7 +1105,7 @@ static void iommu_class_init(ObjectClass *klass, void *data)
 static const TypeInfo iommu_info = {
     .name          = TYPE_INTEL_IOMMU_DEVICE,
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(intel_iommu_state),
+    .instance_size = sizeof(IntelIOMMUState),
     .class_init    = iommu_class_init,
 };
 

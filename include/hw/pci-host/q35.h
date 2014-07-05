@@ -61,7 +61,7 @@ typedef struct MCHPCIState {
     uint64_t pci_hole64_size;
     PcGuestInfo *guest_info;
     uint32_t short_root_bus;
-    intel_iommu_state *iommu;
+    IntelIOMMUState *iommu;
 } MCHPCIState;
 
 typedef struct Q35PCIHost {
