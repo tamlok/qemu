@@ -118,17 +118,18 @@
 #define VTD_PCI_FUNC(devfn)         ((devfn) & 0x07)
 
 typedef struct intel_iommu_state intel_iommu_state;
+typedef struct vtd_address_space vtd_address_space;
 
-typedef struct vtd_address_space {
+struct vtd_address_space {
     int bus_num;
     int devfn;
     AddressSpace as;
     MemoryRegion iommu;
     intel_iommu_state *iommu_state;
-} vtd_address_space;
+};
 
 /* The iommu (DMAR) device state struct */
-typedef struct intel_iommu_state {
+struct intel_iommu_state {
     SysBusDevice busdev;
     MemoryRegion csrmem;
     uint8_t csr[DMAR_REG_SIZE];     /* register values */
@@ -147,7 +148,7 @@ typedef struct intel_iommu_state {
 
     MemoryRegionIOMMUOps iommu_ops;
     vtd_address_space **address_spaces[VTD_PCI_BUS_MAX];
-} intel_iommu_state;
+};
 
 
 /* An invalidate descriptor */
