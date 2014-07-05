@@ -31,7 +31,7 @@
 
 #define TYPE_INTEL_IOMMU_DEVICE "intel-iommu"
 #define INTEL_IOMMU_DEVICE(obj) \
-     OBJECT_CHECK(intel_iommu_state, (obj), TYPE_INTEL_IOMMU_DEVICE)
+     OBJECT_CHECK(IntelIOMMUState, (obj), TYPE_INTEL_IOMMU_DEVICE)
 
 /* DMAR Hardware Unit Definition address (IOMMU unit) set i bios */
 #define Q35_HOST_BRIDGE_IOMMU_ADDR 0xfed90000ULL
@@ -117,7 +117,7 @@
 #define VTD_PCI_SLOT(devfn)         (((devfn) >> 3) & 0x1f)
 #define VTD_PCI_FUNC(devfn)         ((devfn) & 0x07)
 
-typedef struct intel_iommu_state intel_iommu_state;
+typedef struct IntelIOMMUState IntelIOMMUState;
 typedef struct vtd_address_space vtd_address_space;
 
 struct vtd_address_space {
@@ -125,11 +125,11 @@ struct vtd_address_space {
     int devfn;
     AddressSpace as;
     MemoryRegion iommu;
-    intel_iommu_state *iommu_state;
+    IntelIOMMUState *iommu_state;
 };
 
 /* The iommu (DMAR) device state struct */
-struct intel_iommu_state {
+struct IntelIOMMUState {
     SysBusDevice busdev;
     MemoryRegion csrmem;
     uint8_t csr[DMAR_REG_SIZE];     /* register values */
