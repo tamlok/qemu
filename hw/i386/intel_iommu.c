@@ -907,7 +907,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
 static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
 {
-    vtd_address_space *vtd_as = container_of(iommu, vtd_address_space, iommu);
+    VTDAddressSpace *vtd_as = container_of(iommu, VTDAddressSpace, iommu);
     IntelIOMMUState *s = vtd_as->iommu_state;
     int bus_num = vtd_as->bus_num;
     int devfn = vtd_as->devfn;

@@ -350,8 +350,8 @@ static void mch_reset(DeviceState *qdev)
 static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
 {
     IntelIOMMUState *s = opaque;
-    vtd_address_space **pvtd_as;
-    vtd_address_space *vtd_as;
+    VTDAddressSpace **pvtd_as;
+    VTDAddressSpace *vtd_as;
     int bus_num = pci_bus_num(bus);
 
     assert(devfn >= 0);
@@ -359,8 +359,8 @@ static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
     pvtd_as = s->address_spaces[bus_num];
     if (!pvtd_as) {
         /* No corresponding free() */
-        pvtd_as = g_malloc0(sizeof(vtd_address_space *) *
-                          VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX);
+        pvtd_as = g_malloc0(sizeof(VTDAddressSpace *) *
+                            VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX);
         if (!pvtd_as) {
             fprintf(stderr, "error: q35 fail to alloc memory for vtd\n");
             abort();
@@ -381,7 +381,7 @@ static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
         vtd_as->devfn = devfn;
         vtd_as->iommu_state = s;
         memory_region_init_iommu(&(vtd_as->iommu), OBJECT(s), &(s->iommu_ops),
-                                "intel_iommu", UINT64_MAX);
+                                 "intel_iommu", UINT64_MAX);
         address_space_init(&(vtd_as->as), &(vtd_as->iommu), "intel_iommu");
     }
 
