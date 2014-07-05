@@ -330,12 +330,12 @@ static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa)
     int offset;
     uint64_t slpte;
 
-    D("slpt_base 0x%"PRIx64, addr);
+    //D("slpt_base 0x%"PRIx64, addr);
     while (true) {
-        print_slpt(addr);
+        //print_slpt(addr);
         offset = gpa_level_offset(gpa, level);
         slpte = get_slpte(addr, offset);
-        D("level %d slpte 0x%"PRIx64, level, slpte);
+        //D("level %d slpte 0x%"PRIx64, level, slpte);
         if (!slpte_present(slpte)) {
             D("slpte 0x%"PRIx64 " is not present", slpte);
             slpte = (uint64_t)-1;
@@ -363,7 +363,7 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
     uint64_t slpte;
     hwaddr gpa = entry->iova;
 
-    print_root_table(s);
+    //print_root_table(s);
     if (!get_root_entry(s, bus_num, &re)) {
         /* Fixme */
         return;
@@ -373,8 +373,8 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
         D("Root-entry #%d is not present", bus_num);
         return;
     }
-    D("root-entry low 0x%"PRIx64, re.val);
-    print_context_table(&re);
+    //D("root-entry low 0x%"PRIx64, re.val);
+    //print_context_table(&re);
     if (!get_context_entry_from_root(&re, devfn, &ce)) {
         /* Fixme */
         return;
@@ -384,7 +384,7 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
         D("Context-entry #%d(bus #%d) is not present", devfn, bus_num);
         return;
     }
-    D("context-entry hi 0x%"PRIx64 " low 0x%"PRIx64, ce.hi, ce.lo);
+    //D("context-entry hi 0x%"PRIx64 " low 0x%"PRIx64, ce.hi, ce.lo);
     slpte = gpa_to_slpte(&ce, gpa);
     if (slpte == (uint64_t)-1) {
         /* Fixme */
@@ -926,18 +926,18 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
         return ret;
     }
 
-    D("bus %d slot %d func %d devfn %d addr %"PRIx64 " iova %"PRIx64,
-      bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
-      ret.iova);
+    // D("bus %d slot %d func %d devfn %d addr %"PRIx64 " iova %"PRIx64,
+    //   bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
+    //   ret.iova);
 
     iommu_translate(s, bus_num, devfn, &ret);
 
-/*    D("=========================================");
-    print_root_table_all(s);*/
+    // D("=========================================");
+    // print_root_table_all(s);
 
-    D("bus %d slot %d func %d devfn %d addr %"PRIx64 " to_addr %"PRIx64,
-      bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
-      ret.translated_addr);
+    // D("bus %d slot %d func %d devfn %d addr %"PRIx64 " to_addr %"PRIx64,
+    //   bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
+    //   ret.translated_addr);
     return ret;
 }
 
