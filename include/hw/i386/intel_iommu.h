@@ -118,9 +118,9 @@
 #define VTD_PCI_FUNC(devfn)         ((devfn) & 0x07)
 
 typedef struct IntelIOMMUState IntelIOMMUState;
-typedef struct vtd_address_space vtd_address_space;
+typedef struct VTDAddressSpace VTDAddressSpace;
 
-struct vtd_address_space {
+struct VTDAddressSpace {
     int bus_num;
     int devfn;
     AddressSpace as;
@@ -147,7 +147,7 @@ struct IntelIOMMUState {
     bool iq_enable;  /* Set if the IQ is enabled */
 
     MemoryRegionIOMMUOps iommu_ops;
-    vtd_address_space **address_spaces[VTD_PCI_BUS_MAX];
+    VTDAddressSpace **address_spaces[VTD_PCI_BUS_MAX];
 };
 
 
