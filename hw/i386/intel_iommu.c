@@ -1002,25 +1002,19 @@ static Property iommu_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
-static void vtd_reset(DeviceState *d)
+/* Do the real initialization. It will also be called when reset, so pay
+ * attention when adding new initialization stuff.
+ */
+static void do_vtd_init(IntelIOMMUState *s)
 {
-    /* IntelIOMMUState *s = INTEL_IOMMU_DEVICE(d); */
-    D(" ");
-}
-
-static int vtd_init(SysBusDevice *dev)
-{
-    IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
-
     memset(s->csr, 0, DMAR_REG_SIZE);
     memset(s->wmask, 0, DMAR_REG_SIZE);
     memset(s->w1cmask, 0, DMAR_REG_SIZE);
     memset(s->womask, 0, DMAR_REG_SIZE);
-    memset(s->address_spaces, 0, sizeof(s->address_spaces));
 
     s->iommu_ops.translate = vtd_iommu_translate;
-    memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
-                          "intel_iommu", DMAR_REG_SIZE);
+    s->root = 0;
+    s->extended = false;
 
     /* b.0:2 = 6: Number of domains supported: 64K using 16 bit ids
      * b.3   = 0: No advanced fault logging
@@ -1117,7 +1111,58 @@ static int vtd_init(SysBusDevice *dev)
     define_quad(s, DMAR_IOTLB_REG, 0, 0Xb003ffff00000000ULL, 0);
     define_quad(s, DMAR_IVA_REG, 0, 0xfffffffffffff07fULL, 0);
     define_quad_wo(s, DMAR_IVA_REG, 0xfffffffffffff07fULL);
+}
 
+#if 0
+/* Iterate IntelIOMMUState->address_spaces[] and free any allocated memory */
+static void clean_address_space(IntelIOMMUState *s)
+{
+    VTDAddressSpace **pvtd_as;
+    VTDAddressSpace *vtd_as;
+    int i;
+    int j;
+    const int MAX_DEVFN = VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX;
+
+    for (i = 0; i < VTD_PCI_BUS_MAX; ++i) {
+        pvtd_as = s->address_spaces[i];
+        if (!pvtd_as) {
+            continue;
+        }
+        for (j = 0; j < MAX_DEVFN; ++j) {
+            vtd_as = *(pvtd_as + j);
+            if (!vtd_as) {
+                continue;
+            }
+            g_free(vtd_as);
+            *(pvtd_as + j) = 0;
+        }
+        g_free(pvtd_as);
+        s->address_spaces[i] = 0;
+    }
+}
+#endif
+
+/* Reset function of QOM
+ * Should not reset address_spaces when reset
+ */
+static void vtd_reset(DeviceState *d)
+{
+    IntelIOMMUState *s = INTEL_IOMMU_DEVICE(d);
+    D(" ");
+    do_vtd_init(s);
+}
+
+/* Initializatoin function of QOM */
+static int vtd_init(SysBusDevice *dev)
+{
+    IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
+
+    D("");
+    memset(s->address_spaces, 0, sizeof(s->address_spaces));
+    memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
+                          "intel_iommu", DMAR_REG_SIZE);
+
+    do_vtd_init(s);
     return 0;
 }
 
