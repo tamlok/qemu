@@ -262,6 +262,8 @@ typedef struct intel_iommu_inv_desc {
 /* CAP_REG */
 #define VTD_CAP_FRO (DMAR_FRCD_REG_OFFSET << 20) /* (val >> 4) << 24 */
 #define VTD_CAP_NFR ((uint64_t)(DMAR_FRCD_REG_NR - 1) << 40)
+#define VTD_DOMAIN_ID_SHIFT 16 /* 16-bit domain id for 64K domains */
+#define VTD_CAP_ND (((VTD_DOMAIN_ID_SHIFT - 4) / 2) & 7)
 
 /* Register descriptor */
 struct vtd_reg_desc {
