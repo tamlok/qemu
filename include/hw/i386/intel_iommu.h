@@ -340,6 +340,7 @@ typedef struct vtd_context_entry vtd_context_entry;
 
 /* Paging Structure common */
 #define SL_PT_PAGE_SIZE_MASK   (1ULL << 7)
+#define SL_LEVEL_BITS   9   /* Bits to decide the offset for each level */
 
 /* Second Level Paging Structure */
 #define SL_PML4_LEVEL 4
