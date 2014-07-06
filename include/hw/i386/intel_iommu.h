@@ -257,13 +257,22 @@ typedef struct intel_iommu_inv_desc {
 
 
 /* ECAP_REG */
-#define VTD_ECAP_IRO (DMAR_IOTLB_REG_OFFSET << 4) /* (val >> 4) << 8 */
+#define VTD_ECAP_IRO (DMAR_IOTLB_REG_OFFSET << 4)   /* (val >> 4) << 8 */
 
 /* CAP_REG */
-#define VTD_CAP_FRO (DMAR_FRCD_REG_OFFSET << 20) /* (val >> 4) << 24 */
-#define VTD_CAP_NFR ((uint64_t)(DMAR_FRCD_REG_NR - 1) << 40)
-#define VTD_DOMAIN_ID_SHIFT 16 /* 16-bit domain id for 64K domains */
-#define VTD_CAP_ND (((VTD_DOMAIN_ID_SHIFT - 4) / 2) & 7)
+
+/* (val >> 4) << 24 */
+#define VTD_CAP_FRO     ((uint64_t)DMAR_FRCD_REG_OFFSET << 20)
+
+#define VTD_CAP_NFR     ((uint64_t)(DMAR_FRCD_REG_NR - 1) << 40)
+#define VTD_DOMAIN_ID_SHIFT     16  /* 16-bit domain id for 64K domains */
+#define VTD_CAP_ND  (((VTD_DOMAIN_ID_SHIFT - 4) / 2) & 7ULL)
+#define VTD_MGAW    39  /* Maximum Guest Address Width */
+#define VTD_CAP_MGAW    (((VTD_MGAW - 1) & 0x3fULL) << 16)
+/* Supported Adjusted Guest Address Widths */
+#define VTD_SAGAW_MASK  (0x1fULL << 8)
+#define VTD_SAGAW_39bit (0x2ULL << 8)   /* 39-bit AGAW, 3-level page-table */
+#define VTD_SAGAW_48bit (0x4ULL << 8)   /* 48-bit AGAW, 4-level page-table */
 
 /* Register descriptor */
 struct vtd_reg_desc {

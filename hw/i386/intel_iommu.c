@@ -1000,15 +1000,16 @@ static int vtd_init(SysBusDevice *dev)
      * b.6   = 0: Protected high memory region not supported
      * b.8:12 = 2: SAGAW(Supported Adjusted Guest Address Widths), 39-bit,
      *             3-level page-table
-     * b.16:21 = 38: MGAW(Maximum Guest Address Width) = 38 + 1
+     * b.16:21 = 38: MGAW(Maximum Guest Address Width) = 39
      * b.22 = 1: ZLR(Zero Length Read) supports zero length DMA read requests
      *           to write-only pages
      * b.24:33 = 34: FRO(Fault-recording Register offset)
      * b.54 = 0: DWD(Write Draining), draining of write requests not supported
      * b.55 = 0: DRD(Read Draining), draining of read requests not supported
      */
-    const uint64_t dmar_cap_reg_value = 0x00660200ULL | VTD_CAP_FRO |
-                                        VTD_CAP_NFR | VTD_CAP_ND;
+    const uint64_t dmar_cap_reg_value = 0x00400000ULL | VTD_CAP_FRO |
+                                        VTD_CAP_NFR | VTD_CAP_ND |
+                                        VTD_CAP_MGAW | VTD_SAGAW_39bit;
 
     /* b.1 = 0: QI(Queued Invalidation support) not supported
      * b.2 = 0: DT(Device-TLB support)
