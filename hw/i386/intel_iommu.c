@@ -993,7 +993,7 @@ static int vtd_init(SysBusDevice *dev)
     memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
                           "intel_iommu", DMAR_REG_SIZE);
 
-    /* b.0:2 = 2: Number of domains supported: 256 using 8 bit ids
+    /* b.0:2 = 6: Number of domains supported: 64K using 16 bit ids
      * b.3   = 0: No advanced fault logging
      * b.4   = 0: No required write buffer flushing
      * b.5   = 0: Protected low memory region not supported
@@ -1007,8 +1007,8 @@ static int vtd_init(SysBusDevice *dev)
      * b.54 = 0: DWD(Write Draining), draining of write requests not supported
      * b.55 = 0: DRD(Read Draining), draining of read requests not supported
      */
-    const uint64_t dmar_cap_reg_value = 0x00660202ULL | VTD_CAP_FRO
-                                        | VTD_CAP_NFR;
+    const uint64_t dmar_cap_reg_value = 0x00660200ULL | VTD_CAP_FRO |
+                                        VTD_CAP_NFR | VTD_CAP_ND;
 
     /* b.1 = 0: QI(Queued Invalidation support) not supported
      * b.2 = 0: DT(Device-TLB support)
