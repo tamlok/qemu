@@ -286,6 +286,13 @@ typedef struct vtd_reg_desc vtd_reg_desc;
 #define VTD_PAGE_SHIFT      (12)
 #define VTD_PAGE_SIZE       (1UL << VTD_PAGE_SHIFT)
 
+#define VTD_PAGE_SHIFT_4K   (12)
+#define VTD_PAGE_MASK_4K    (~((1ULL << VTD_PAGE_SHIFT_4K) - 1))
+#define VTD_PAGE_SHIFT_2M   (21)
+#define VTD_PAGE_MASK_2M    (~((1UL << VTD_PAGE_SHIFT_2M) - 1))
+#define VTD_PAGE_SHIFT_1G   (30)
+#define VTD_PAGE_MASK_1G    (~((1UL << VTD_PAGE_SHIFT_1G) - 1))
+
 /* Root-Entry
  * 0: Present
  * 1-11: Reserved
@@ -332,7 +339,7 @@ typedef struct vtd_context_entry vtd_context_entry;
 
 
 /* Paging Structure common */
-#define PT_PAGE_SIZE_MASK   (1ULL << 7)
+#define SL_PT_PAGE_SIZE_MASK   (1ULL << 7)
 
 /* Second Level Paging Structure */
 #define SL_PML4_LEVEL 4

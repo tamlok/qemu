@@ -219,10 +219,10 @@ static inline dma_addr_t get_slpt_base_from_context(vtd_context_entry *ce)
 }
 
 #define SLPT_LEVEL_BITS 9
-
+/* The shift of an addr for a certain level of paging structure */
 static inline int slpt_level_shift(int level)
 {
-    return (VTD_PAGE_SHIFT + (level - 1) * SLPT_LEVEL_BITS);
+    return (VTD_PAGE_SHIFT_4K + (level - 1) * SLPT_LEVEL_BITS);
 }
 
 static inline bool slpte_present(uint64_t slpte)
@@ -246,7 +246,7 @@ static inline uint64_t get_slpte_addr(uint64_t slpte)
 /* Whether the pte points to a large page */
 static inline bool is_large_pte(uint64_t pte)
 {
-    return (pte & PT_PAGE_SIZE_MASK);
+    return (pte & SL_PT_PAGE_SIZE_MASK);
 }
 
 /* Whether the pte indicates the address of the page frame */
@@ -318,15 +318,30 @@ static void print_context_table(vtd_root_entry *re)
     }
 }
 
+/* Given a gpa and the level of paging structure, return the offset of current
+ * level.
+ */
 static inline int gpa_level_offset(uint64_t gpa, int level)
 {
     return ((gpa >> slpt_level_shift(level)) & ((1ULL << SLPT_LEVEL_BITS) - 1));
 }
 
-static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa)
+/* Get the page-table level that hardware should use for the second-level
+ * page-table walk from the Address Width field of context-entry.
+ */
+static inline int get_level_from_context_entry(vtd_context_entry *ce)
+{
+    return (2 + (ce->hi & CONTEXT_ENTRY_AW));
+}
+
+/* Given the @gpa, return relevant slpte. @slpte_level will be the last level
+ * of the translation, can be used for deciding the size of large page.
+ */
+static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa,
+                             int *slpte_level)
 {
     dma_addr_t addr = get_slpt_base_from_context(ce);
-    int level = SL_PDP_LEVEL;
+    int level = get_level_from_context_entry(ce);
     int offset;
     uint64_t slpte;
 
@@ -339,9 +354,11 @@ static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa)
         if (!slpte_present(slpte)) {
             D("slpte 0x%"PRIx64 " is not present", slpte);
             slpte = (uint64_t)-1;
+            *slpte_level = level;
             break;
         }
 		if (is_last_slpte(slpte, level)) {
+            *slpte_level = level;
             break;
         }
         addr = get_slpte_addr(slpte);
@@ -356,12 +373,13 @@ static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa)
  * @entry: IOMMUTLBEntry that contain the addr to be translated and result
  */
 static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
-                              IOMMUTLBEntry *entry)
+                            hwaddr addr, IOMMUTLBEntry *entry)
 {
     vtd_root_entry re;
     vtd_context_entry ce;
     uint64_t slpte;
-    hwaddr gpa = entry->iova;
+    int level;
+    uint64_t page_mask = VTD_PAGE_MASK_4K;
 
     //print_root_table(s);
     if (!get_root_entry(s, bus_num, &re)) {
@@ -385,16 +403,27 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
         return;
     }
     //D("context-entry hi 0x%"PRIx64 " low 0x%"PRIx64, ce.hi, ce.lo);
-    slpte = gpa_to_slpte(&ce, gpa);
+    slpte = gpa_to_slpte(&ce, addr, &level);
     if (slpte == (uint64_t)-1) {
         /* Fixme */
-        D("Can't get slpte for gpa %"PRIx64, gpa);
+        D("Can't get slpte for gpa %"PRIx64, addr);
         return;
     }
-    /* Fixme */
-    entry->translated_addr = get_slpte_addr(slpte) & TARGET_PAGE_MASK;
-    entry->perm = IOMMU_RW;
+    
+    if (is_large_pte(slpte)) {
+        if (level == SL_PDP_LEVEL) {
+            /* 1-GB page */
+            page_mask = VTD_PAGE_MASK_1G;
+        } else {
+            /* 2-MB page */
+            page_mask = VTD_PAGE_MASK_2M;
+        }
+    }
 
+    entry->iova = addr & page_mask;
+    entry->translated_addr = get_slpte_addr(slpte) & page_mask;
+    entry->addr_mask = ~page_mask;
+    entry->perm = IOMMU_RW;
 }
 
 /* Iterate a Second Level Page Table */
@@ -913,15 +942,18 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
     int devfn = vtd_as->devfn;
     IOMMUTLBEntry ret = {
         .target_as = &address_space_memory,
-        .iova = addr & TARGET_PAGE_MASK,
+        .iova = 0,
         .translated_addr = 0,
-        .addr_mask = ~TARGET_PAGE_MASK,
+        .addr_mask = ~(hwaddr)0,
         .perm = IOMMU_NONE,
     };
 
     if (!(__get_long(s, DMAR_GSTS_REG) & VTD_GSTS_TES)) {
-        /* DMAR disabled, passthrough */
-        ret.translated_addr = addr & TARGET_PAGE_MASK;
+        /* DMAR disabled, passthrough, use 4k-page*/
+        /* Fixme: not sure what is the page size */
+        ret.iova = addr & VTD_PAGE_MASK_4K;
+        ret.translated_addr = addr & VTD_PAGE_MASK_4K;
+        ret.addr_mask = ~VTD_PAGE_MASK_4K;
         ret.perm = IOMMU_RW;
         return ret;
     }
@@ -930,7 +962,7 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
     //   bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
     //   ret.iova);
 
-    iommu_translate(s, bus_num, devfn, &ret);
+    iommu_translate(s, bus_num, devfn, addr, &ret);
 
     // D("=========================================");
     // print_root_table_all(s);
