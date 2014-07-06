@@ -274,13 +274,14 @@ typedef struct intel_iommu_inv_desc {
 #define VTD_SAGAW_39bit (0x2ULL << 8)   /* 39-bit AGAW, 3-level page-table */
 #define VTD_SAGAW_48bit (0x4ULL << 8)   /* 48-bit AGAW, 4-level page-table */
 
+#if 0
 /* Register descriptor */
 struct vtd_reg_desc {
     uint32_t offset;
     int size;
 };
 typedef struct vtd_reg_desc vtd_reg_desc;
-
+#endif
 
 /* Pagesize of VTD paging structures, including root and context tables */
 #define VTD_PAGE_SHIFT      (12)

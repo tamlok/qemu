@@ -32,7 +32,7 @@
     do { } while (0)
 #endif
 
-
+#if 0
 #define REG_DESC(_offset, _size) \
     .offset = _offset, \
     .size = _size, \
@@ -65,6 +65,7 @@ static bool is_reserved(uint32_t offset, int size)
     }
     return false;
 }
+#endif
 
 static inline void define_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val,
                         uint64_t wmask, uint64_t w1cmask)
@@ -811,10 +812,6 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     }
 
     assert(size == 4 || size == 8);
-
-    if (is_reserved(addr, size)) {
-        return;
-    }
 
     /* Val should be written into csr within the handler */
     switch (addr) {
