@@ -218,11 +218,11 @@ static inline dma_addr_t get_slpt_base_from_context(vtd_context_entry *ce)
     return (ce->lo & CONTEXT_ENTRY_SLPTPTR);
 }
 
-#define SLPT_LEVEL_BITS 9
+
 /* The shift of an addr for a certain level of paging structure */
 static inline int slpt_level_shift(int level)
 {
-    return (VTD_PAGE_SHIFT_4K + (level - 1) * SLPT_LEVEL_BITS);
+    return (VTD_PAGE_SHIFT_4K + (level - 1) * SL_LEVEL_BITS);
 }
 
 static inline bool slpte_present(uint64_t slpte)
@@ -323,7 +323,7 @@ static void print_context_table(vtd_root_entry *re)
  */
 static inline int gpa_level_offset(uint64_t gpa, int level)
 {
-    return ((gpa >> slpt_level_shift(level)) & ((1ULL << SLPT_LEVEL_BITS) - 1));
+    return ((gpa >> slpt_level_shift(level)) & ((1ULL << SL_LEVEL_BITS) - 1));
 }
 
 /* Get the page-table level that hardware should use for the second-level
@@ -513,19 +513,6 @@ static void iommu_inv_queue_setup(IntelIOMMUState *s)
 }
 
 
-static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
-{
-    D("Queued Invalidation Enable %s", (en ? "on" : "off"));
-
-    if (en) {
-        iommu_inv_queue_setup(s);
-    }
-
-    /* Ok - report back to driver */
-    set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_QIES);
-}
-
-
 static void vtd_root_table_setup(IntelIOMMUState *s)
 {
     s->root = *((uint64_t *)&s->csr[DMAR_RTADDR_REG]);
@@ -655,6 +642,19 @@ static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
 
     set_quad(s, DMAR_IQT_REG, val);
 }*/
+
+static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
+{
+    D("Queued Invalidation Enable %s", (en ? "on" : "off"));
+
+    if (en) {
+        iommu_inv_queue_setup(s);
+    }
+
+    /* Ok - report back to driver */
+    set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_QIES);
+}
+
 
 /* Set Root Table Pointer */
 static void handle_gcmd_srtp(IntelIOMMUState *s, bool en)
