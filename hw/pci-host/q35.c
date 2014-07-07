@@ -396,6 +396,7 @@ static void mch_init_dmar(MCHPCIState *mch)
     PCIBus *pci_bus = PCI_BUS(qdev_get_parent_bus(DEVICE(mch)));
 
     mch->iommu = INTEL_IOMMU_DEVICE(object_new(TYPE_INTEL_IOMMU_DEVICE));
+    qdev_set_parent_bus(DEVICE(mch->iommu), sysbus_get_default());
     object_property_set_bool(OBJECT(mch->iommu), true, "realized", &error);
 
     if (error) {
