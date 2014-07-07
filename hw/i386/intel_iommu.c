@@ -1165,7 +1165,7 @@ static void vtd_realize(DeviceState *dev, Error **errp)
     do_vtd_init(s);
 }
 
-static void iommu_class_init(ObjectClass *klass, void *data)
+static void vtd_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
@@ -1175,17 +1175,17 @@ static void iommu_class_init(ObjectClass *klass, void *data)
     dc->props = iommu_properties;
 }
 
-static const TypeInfo iommu_info = {
+static const TypeInfo vtd_info = {
     .name          = TYPE_INTEL_IOMMU_DEVICE,
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(IntelIOMMUState),
-    .class_init    = iommu_class_init,
+    .class_init    = vtd_class_init,
 };
 
-static void iommu_register_types(void)
+static void vtd_register_types(void)
 {
     D(" ");
-    type_register_static(&iommu_info);
+    type_register_static(&vtd_info);
 }
 
-type_init(iommu_register_types)
+type_init(vtd_register_types)
