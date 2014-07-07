@@ -1145,15 +1145,15 @@ static void clean_address_space(IntelIOMMUState *s)
 /* Reset function of QOM
  * Should not reset address_spaces when reset
  */
-static void vtd_reset(DeviceState *d)
+static void vtd_reset(DeviceState *dev)
 {
-    IntelIOMMUState *s = INTEL_IOMMU_DEVICE(d);
+    IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
     D(" ");
     do_vtd_init(s);
 }
 
 /* Initializatoin function of QOM */
-static int vtd_init(SysBusDevice *dev)
+static void vtd_realize(DeviceState *dev, Error **errp)
 {
     IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
 
@@ -1163,16 +1163,14 @@ static int vtd_init(SysBusDevice *dev)
                           "intel_iommu", DMAR_REG_SIZE);
 
     do_vtd_init(s);
-    return 0;
 }
 
 static void iommu_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
-    SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
-    k->init = vtd_init;
     dc->reset = vtd_reset;
+    dc->realize = vtd_realize;
     dc->vmsd = &vtd_vmstate;
     dc->props = iommu_properties;
 }
