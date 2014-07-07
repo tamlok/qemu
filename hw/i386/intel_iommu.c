@@ -658,15 +658,13 @@ static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
 
 
 /* Set Root Table Pointer */
-static void handle_gcmd_srtp(IntelIOMMUState *s, bool en)
+static void handle_gcmd_srtp(IntelIOMMUState *s)
 {
-    D("Set Root Table Pointer %s", (en ? "on" : "off"));
-    /* if @en is false, that is, clearing this bit, it has no effect. */
-    if (en) {
-        vtd_root_table_setup(s);
-        /* Ok - report back to driver */
-        set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_RTPS);
-    }
+    D("Set Root Table Pointer");
+
+    vtd_root_table_setup(s);
+    /* Ok - report back to driver */
+    set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_RTPS);
 }
 
 
@@ -686,43 +684,24 @@ static void handle_gcmd_te(IntelIOMMUState *s, bool en)
 }
 
 /* Handle write to Global Command Register */
-static void handle_gcmd_write(IntelIOMMUState *s, uint32_t val)
+static void handle_gcmd_write(IntelIOMMUState *s)
 {
-    uint32_t oldval = __get_long(s, DMAR_GCMD_REG);
-    uint32_t changed = oldval ^ val;
+    uint32_t status = __get_long(s, DMAR_GSTS_REG);
+    uint32_t val = __get_long(s, DMAR_GCMD_REG);
+    uint32_t changed = status ^ val;
+    D("value 0x%x status 0x%x", val, status);
     if (changed & VTD_GCMD_TE) {
+        /* Translation enable/disable */
         handle_gcmd_te(s, val & VTD_GCMD_TE);
-    }
-    if (val & VTD_GCMD_SRTP) {
-        handle_gcmd_srtp(s, val & VTD_GCMD_SRTP);
-    }
-    if (changed & VTD_GCMD_SFL) {
-        D("Set Fault Log %s", (val & VTD_GCMD_SFL ? "on" : "off"));
-    }
-    if (changed & VTD_GCMD_EAFL) {
-        D("Enable Advanced Fault Logging %s",
-          (val & VTD_GCMD_EAFL ? "on" : "off"));
-    }
-    if (changed & VTD_GCMD_WBF) {
-        D("Write Buffer Flush %s", (val & VTD_GCMD_WBF ? "on" : "off"));
-    }
-    if (changed & VTD_GCMD_QIE) {
+    } else if (val & VTD_GCMD_SRTP) {
+        /* Set/update the root-table pointer */
+        handle_gcmd_srtp(s);
+    } else if (changed & VTD_GCMD_QIE) {
+        /* Queued Invalidation Enable */
         handle_gcmd_qie(s, val & VTD_GCMD_QIE);
+    } else {
+        D("Unhandled gcmd write");
     }
-    if (changed & VTD_GCMD_SIRTP) {
-        D("Interrupt Remapping Enable %s",
-          (val & VTD_GCMD_SIRTP ? "on" : "off"));
-    }
-    if (changed & VTD_GCMD_IRE) {
-        D("Set Interrupt Remapping Table Pointer %s",
-          (val & VTD_GCMD_IRE ? "on" : "off"));
-    }
-    if (changed & VTD_GCMD_CFI) {
-        D("Compatibility Format Interrupt %s",
-          (val & VTD_GCMD_CFI ? "on" : "off"));
-    }
-
-    set_long(s, DMAR_GCMD_REG, val);
 }
 
 /* Handle write to Context Command Register */
@@ -819,7 +798,8 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_GCMD_REG:
         D("DMAR_GCMD_REG write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
           addr, size, val);
-        handle_gcmd_write(s, val);
+        set_long(s, addr, val);
+        handle_gcmd_write(s);
         break;
 
     /* Invalidation Queue Tail Register, 64-bit */
