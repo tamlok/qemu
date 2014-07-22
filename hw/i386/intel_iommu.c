@@ -32,40 +32,6 @@
     do { } while (0)
 #endif
 
-#if 0
-#define REG_DESC(_offset, _size) \
-    .offset = _offset, \
-    .size = _size, \
-
-
-static const vtd_reg_desc reserved_regs[] = {
-    { REG_DESC(0x04, 32) },
-    { REG_DESC(0x30, 32) },
-    { REG_DESC(0x48, 64) },
-    { REG_DESC(0x50, 64) },
-    { REG_DESC(0x60, 32) },
-    { REG_DESC(0x98, 32) },
-    { REG_DESC(0xb0, 64) },
-    { REG_DESC(0xd8, 32) },
-};
-
-static bool is_reserved(uint32_t offset, int size)
-{
-    int i;
-    for (i = 0; i < ARRAY_SIZE(reserved_regs); ++i) {
-        if (reserved_regs[i].offset == offset) {
-            if (size > reserved_regs[i].size) {
-                D("Access to reserved regs exceeds the size %d",
-                  reserved_regs[i].size);
-            }
-            return true;
-        } else {
-            return false;
-        }
-    }
-    return false;
-}
-#endif
 
 static inline void define_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val,
                         uint64_t wmask, uint64_t w1cmask)
