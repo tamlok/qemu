@@ -176,17 +176,16 @@ static inline bool root_entry_present(vtd_root_entry *root)
 static bool get_root_entry(IntelIOMMUState *s, int index, vtd_root_entry *re)
 {
     dma_addr_t addr;
-    if (index >= 0 && index < ROOT_ENTRY_NR) {
-        addr = s->root + index * sizeof(*re);
-        if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
-            fprintf(stderr, "(vtd)error: fail to read root table\n");
-            return false;
-        }
-        re->val = le64_to_cpu(re->val);
-        return true;
-    }
 
-    return false;
+    assert(index >= 0 && index < ROOT_ENTRY_NR);
+
+    addr = s->root + index * sizeof(*re);
+    if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
+        fprintf(stderr, "(vtd)error: fail to read root table\n");
+        return false;
+    }
+    re->val = le64_to_cpu(re->val);
+    return true;
 }
 
 
@@ -201,20 +200,21 @@ static bool get_context_entry_from_root(vtd_root_entry *root, int index,
     dma_addr_t addr;
 
     if (!root_entry_present(root)) {
+        ce->lo = 0;
+        ce->hi = 0;
         return false;
     }
-    if (index >= 0 && index < CONTEXT_ENTRY_NR) {
-        addr = (root->val & ROOT_ENTRY_CTP) + index * sizeof(*ce);
-        if (dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce))) {
-            fprintf(stderr, "(vtd)error: fail to read context table\n");
-            return false;
-        }
-        ce->lo = le64_to_cpu(ce->lo);
-        ce->hi = le64_to_cpu(ce->hi);
-        return true;
-    }
 
-    return false;
+    assert(index >= 0 && index < CONTEXT_ENTRY_NR);
+
+    addr = (root->val & ROOT_ENTRY_CTP) + index * sizeof(*ce);
+    if (dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce))) {
+        fprintf(stderr, "(vtd)error: fail to read context table\n");
+        return false;
+    }
+    ce->lo = le64_to_cpu(ce->lo);
+    ce->hi = le64_to_cpu(ce->hi);
+    return true;
 }
 
 static inline dma_addr_t get_slpt_base_from_context(vtd_context_entry *ce)
@@ -269,9 +269,9 @@ static inline bool is_last_slpte(uint64_t slpte, int level)
 static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
 {
     uint64_t slpte;
-    if (index >= SL_PT_ENTRY_NR) {
-        return (uint64_t)-1;
-    }
+
+    assert(index >= 0 && index < SL_PT_ENTRY_NR);
+
     if (dma_memory_read(&address_space_memory,
                         base_addr + index * sizeof(slpte), &slpte,
                         sizeof(slpte))) {
@@ -353,7 +353,6 @@ static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa,
 
     /* D("slpt_base 0x%"PRIx64, addr); */
     while (true) {
-        /* print_slpt(addr); */
         offset = gpa_level_offset(gpa, level);
         slpte = get_slpte(addr, offset);
         /* D("level %d slpte 0x%"PRIx64, level, slpte); */
@@ -668,7 +667,7 @@ static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
 /* Set Root Table Pointer */
 static void handle_gcmd_srtp(IntelIOMMUState *s)
 {
-    D("Set Root Table Pointer");
+    D("set Root Table Pointer");
 
     vtd_root_table_setup(s);
     /* Ok - report back to driver */
