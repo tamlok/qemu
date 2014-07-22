@@ -347,6 +347,53 @@ static void mch_reset(DeviceState *qdev)
     mch_update(mch);
 }
 
+static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
+{
+    IntelIOMMUState *s = opaque;
+    VTDAddressSpace **pvtd_as;
+    VTDAddressSpace *vtd_as;
+    int bus_num = pci_bus_num(bus);
+
+    assert(0 <= bus_num && bus_num <= VTD_PCI_BUS_MAX);
+    assert(0 <= devfn && devfn <= VTD_PCI_DEVFN_MAX);
+
+    pvtd_as = s->address_spaces[bus_num];
+    if (!pvtd_as) {
+        /* No corresponding free() */
+        pvtd_as = g_malloc0(sizeof(VTDAddressSpace *) *
+                            VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX);
+        s->address_spaces[bus_num] = pvtd_as;
+    }
+
+    vtd_as = *(pvtd_as + devfn);
+    if (!vtd_as) {
+        vtd_as = g_malloc0(sizeof(*vtd_as));
+        *(pvtd_as + devfn) = vtd_as;
+
+        vtd_as->bus_num = (uint8_t)bus_num;
+        vtd_as->devfn = (uint8_t)devfn;
+        vtd_as->iommu_state = s;
+        memory_region_init_iommu(&vtd_as->iommu, OBJECT(s), &s->iommu_ops,
+                                 "intel_iommu", UINT64_MAX);
+        address_space_init(&vtd_as->as, &vtd_as->iommu, "intel_iommu");
+    }
+
+    return &vtd_as->as;
+}
+
+static void mch_init_dmar(MCHPCIState *mch)
+{
+    PCIBus *pci_bus = PCI_BUS(qdev_get_parent_bus(DEVICE(mch)));
+
+    mch->iommu = INTEL_IOMMU_DEVICE(qdev_create(NULL, TYPE_INTEL_IOMMU_DEVICE));
+    object_property_add_child(OBJECT(mch), "intel-iommu",
+                              OBJECT(mch->iommu), NULL);
+    qdev_init_nofail(DEVICE(mch->iommu));
+    sysbus_mmio_map(SYS_BUS_DEVICE(mch->iommu), 0, Q35_HOST_BRIDGE_IOMMU_ADDR);
+
+    pci_setup_iommu(pci_bus, q35_host_dma_iommu, mch->iommu);
+}
+
 static int mch_init(PCIDevice *d)
 {
     int i;
@@ -369,6 +416,10 @@ static int mch_init(PCIDevice *d)
         init_pam(DEVICE(mch), mch->ram_memory, mch->system_memory, mch->pci_address_space,
                  &mch->pam_regions[i+1], PAM_EXPAN_BASE + i * PAM_EXPAN_SIZE,
                  PAM_EXPAN_SIZE);
+    }
+    /* Intel IOMMU (VT-d) */
+    if (qemu_opt_get_bool(qemu_get_machine_opts(), "iommu", false)) {
+        mch_init_dmar(mch);
     }
     return 0;
 }
