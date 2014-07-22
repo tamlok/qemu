@@ -22,7 +22,7 @@
 #include "exec/address-spaces.h"
 #include "hw/i386/intel_iommu.h"
 
-#define DEBUG_INTEL_IOMMU
+/* #define DEBUG_INTEL_IOMMU */
 #ifdef DEBUG_INTEL_IOMMU
 #define D(fmt, ...) \
     do { fprintf(stderr, "(vtd)%s: " fmt "\n", __func__, \
@@ -130,6 +130,7 @@ static inline uint32_t get_long(IntelIOMMUState *s, hwaddr addr)
 }
 
 
+
 /* "Internal" get/set operations */
 static inline uint64_t __get_quad(IntelIOMMUState *s, hwaddr addr)
 {
@@ -140,7 +141,6 @@ static inline uint32_t __get_long(IntelIOMMUState *s, hwaddr addr)
 {
     return *((uint32_t *)&s->csr[addr]);
 }
-
 
 
 /* val = (val & ~clear) | mask */
@@ -164,9 +164,12 @@ static inline uint64_t set_mask_quad(IntelIOMMUState *s, hwaddr addr,
 }
 
 
-static inline bool root_entry_present(vtd_root_entry* root)
+
+
+
+static inline bool root_entry_present(vtd_root_entry *root)
 {
-    return (root->val & ROOT_ENTRY_P);
+    return root->val & ROOT_ENTRY_P;
 }
 
 
@@ -176,7 +179,7 @@ static bool get_root_entry(IntelIOMMUState *s, int index, vtd_root_entry *re)
     if (index >= 0 && index < ROOT_ENTRY_NR) {
         addr = s->root + index * sizeof(*re);
         if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
-            fprintf(stderr, "(vtd) fail to read root table\n");
+            fprintf(stderr, "(vtd)error: fail to read root table\n");
             return false;
         }
         re->val = le64_to_cpu(re->val);
@@ -189,7 +192,7 @@ static bool get_root_entry(IntelIOMMUState *s, int index, vtd_root_entry *re)
 
 static inline bool context_entry_present(vtd_context_entry *context)
 {
-    return (context->lo & CONTEXT_ENTRY_P);
+    return context->lo & CONTEXT_ENTRY_P;
 }
 
 static bool get_context_entry_from_root(vtd_root_entry *root, int index,
@@ -203,7 +206,7 @@ static bool get_context_entry_from_root(vtd_root_entry *root, int index,
     if (index >= 0 && index < CONTEXT_ENTRY_NR) {
         addr = (root->val & ROOT_ENTRY_CTP) + index * sizeof(*ce);
         if (dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce))) {
-            fprintf(stderr, "(vtd) fail to read context table\n");
+            fprintf(stderr, "(vtd)error: fail to read context table\n");
             return false;
         }
         ce->lo = le64_to_cpu(ce->lo);
@@ -216,19 +219,19 @@ static bool get_context_entry_from_root(vtd_root_entry *root, int index,
 
 static inline dma_addr_t get_slpt_base_from_context(vtd_context_entry *ce)
 {
-    return (ce->lo & CONTEXT_ENTRY_SLPTPTR);
+    return ce->lo & CONTEXT_ENTRY_SLPTPTR;
 }
 
 
 /* The shift of an addr for a certain level of paging structure */
 static inline int slpt_level_shift(int level)
 {
-    return (VTD_PAGE_SHIFT_4K + (level - 1) * SL_LEVEL_BITS);
+    return VTD_PAGE_SHIFT_4K + (level - 1) * SL_LEVEL_BITS;
 }
 
 static inline bool slpte_present(uint64_t slpte)
 {
-    return (slpte & 3);
+    return slpte & 3;
 }
 
 /* Calculate the GPA given the base address, the index in the page table and
@@ -236,18 +239,18 @@ static inline bool slpte_present(uint64_t slpte)
  */
 static inline uint64_t get_slpt_gpa(uint64_t addr, int index, int level)
 {
-    return (addr + (((uint64_t)index) << slpt_level_shift(level)));
+    return addr + (((uint64_t)index) << slpt_level_shift(level));
 }
 
 static inline uint64_t get_slpte_addr(uint64_t slpte)
 {
-    return (slpte & SL_PT_BASE_ADDR_MASK);
+    return slpte & SL_PT_BASE_ADDR_MASK;
 }
 
 /* Whether the pte points to a large page */
 static inline bool is_large_pte(uint64_t pte)
 {
-    return (pte & SL_PT_PAGE_SIZE_MASK);
+    return pte & SL_PT_PAGE_SIZE_MASK;
 }
 
 /* Whether the pte indicates the address of the page frame */
@@ -272,13 +275,14 @@ static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
     if (dma_memory_read(&address_space_memory,
                         base_addr + index * sizeof(slpte), &slpte,
                         sizeof(slpte))) {
-        fprintf(stderr, "(vtd) fail to read slpte\n");
+        fprintf(stderr, "(vtd)error: fail to read slpte\n");
         return (uint64_t)-1;
     }
     slpte = le64_to_cpu(slpte);
     return slpte;
 }
 
+#if 0
 static inline void print_slpt(dma_addr_t base_addr)
 {
     int i;
@@ -318,13 +322,14 @@ static void print_context_table(vtd_root_entry *re)
         }
     }
 }
+#endif
 
 /* Given a gpa and the level of paging structure, return the offset of current
  * level.
  */
 static inline int gpa_level_offset(uint64_t gpa, int level)
 {
-    return ((gpa >> slpt_level_shift(level)) & ((1ULL << SL_LEVEL_BITS) - 1));
+    return (gpa >> slpt_level_shift(level)) & ((1ULL << SL_LEVEL_BITS) - 1);
 }
 
 /* Get the page-table level that hardware should use for the second-level
@@ -332,7 +337,7 @@ static inline int gpa_level_offset(uint64_t gpa, int level)
  */
 static inline int get_level_from_context_entry(vtd_context_entry *ce)
 {
-    return (2 + (ce->hi & CONTEXT_ENTRY_AW));
+    return 2 + (ce->hi & CONTEXT_ENTRY_AW);
 }
 
 /* Given the @gpa, return relevant slpte. @slpte_level will be the last level
@@ -346,19 +351,19 @@ static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa,
     int offset;
     uint64_t slpte;
 
-    //D("slpt_base 0x%"PRIx64, addr);
+    /* D("slpt_base 0x%"PRIx64, addr); */
     while (true) {
-        //print_slpt(addr);
+        /* print_slpt(addr); */
         offset = gpa_level_offset(gpa, level);
         slpte = get_slpte(addr, offset);
-        //D("level %d slpte 0x%"PRIx64, level, slpte);
+        /* D("level %d slpte 0x%"PRIx64, level, slpte); */
         if (!slpte_present(slpte)) {
-            D("slpte 0x%"PRIx64 " is not present", slpte);
+            D("error: slpte 0x%"PRIx64 " is not present", slpte);
             slpte = (uint64_t)-1;
             *slpte_level = level;
             break;
         }
-		if (is_last_slpte(slpte, level)) {
+        if (is_last_slpte(slpte, level)) {
             *slpte_level = level;
             break;
         }
@@ -382,35 +387,34 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
     int level;
     uint64_t page_mask = VTD_PAGE_MASK_4K;
 
-    //print_root_table(s);
+
     if (!get_root_entry(s, bus_num, &re)) {
-        /* Fixme */
+        /* FIXME */
         return;
     }
     if (!root_entry_present(&re)) {
-        /* Fixme */
-        D("Root-entry #%d is not present", bus_num);
+        /* FIXME */
+        D("error: root-entry #%d is not present", bus_num);
         return;
     }
-    //D("root-entry low 0x%"PRIx64, re.val);
-    //print_context_table(&re);
+    /* D("root-entry low 0x%"PRIx64, re.val); */
     if (!get_context_entry_from_root(&re, devfn, &ce)) {
-        /* Fixme */
+        /* FIXME */
         return;
     }
     if (!context_entry_present(&ce)) {
-        /* Fixme */
-        D("Context-entry #%d(bus #%d) is not present", devfn, bus_num);
+        /* FIXME */
+        D("error: context-entry #%d(bus #%d) is not present", devfn, bus_num);
         return;
     }
-    //D("context-entry hi 0x%"PRIx64 " low 0x%"PRIx64, ce.hi, ce.lo);
+    /* D("context-entry hi 0x%"PRIx64 " low 0x%"PRIx64, ce.hi, ce.lo); */
     slpte = gpa_to_slpte(&ce, addr, &level);
     if (slpte == (uint64_t)-1) {
-        /* Fixme */
-        D("Can't get slpte for gpa %"PRIx64, addr);
+        /* FIXME */
+        D("error: can't get slpte for gpa %"PRIx64, addr);
         return;
     }
-    
+
     if (is_large_pte(slpte)) {
         if (level == SL_PDP_LEVEL) {
             /* 1-GB page */
@@ -427,6 +431,7 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
     entry->perm = IOMMU_RW;
 }
 
+#if 0
 /* Iterate a Second Level Page Table */
 static void __walk_slpt(dma_addr_t table_addr, int level, uint64_t gpa)
 {
@@ -450,7 +455,8 @@ static void __walk_slpt(dma_addr_t table_addr, int level, uint64_t gpa)
         next_table_addr = get_slpte_addr(slpte);
 
         if (is_last_slpte(slpte, level)) {
-            D("slpte gpa 0x%"PRIx64 ", hpa 0x%"PRIx64, next_gpa, next_table_addr);
+            D("slpte gpa 0x%"PRIx64 ", hpa 0x%"PRIx64, next_gpa,
+              next_table_addr);
             if (next_gpa != next_table_addr) {
                 D("Not 1:1 mapping, slpte 0x%"PRIx64, slpte);
             }
@@ -459,7 +465,6 @@ static void __walk_slpt(dma_addr_t table_addr, int level, uint64_t gpa)
         }
     }
 }
-
 
 
 static void print_paging_structure_from_context(vtd_context_entry *ce)
@@ -480,7 +485,8 @@ static void print_root_table_all(IntelIOMMUState *s)
 
     for (i = 0; i < ROOT_ENTRY_NR; ++i) {
         if (get_root_entry(s, i, &re) && root_entry_present(&re)) {
-            D("root_entry 0x%x: hi 0x%"PRIx64 " low 0x%"PRIx64, i, re.rsvd, re.val);
+            D("root_entry 0x%x: hi 0x%"PRIx64 " low 0x%"PRIx64, i, re.rsvd,
+              re.val);
 
             for (j = 0; j < CONTEXT_ENTRY_NR; ++j) {
                 if (get_context_entry_from_root(&re, j, &ce)
@@ -494,24 +500,9 @@ static void print_root_table_all(IntelIOMMUState *s)
         }
     }
 }
+#endif
 
 
-
-
-static void iommu_inv_queue_setup(IntelIOMMUState *s)
-{
-    uint64_t tail_val;
-    s->iq = *((uint64_t *)&s->csr[DMAR_IQA_REG]);
-    s->iq_sz = 0x100 << (s->iq & 0x7);  /* 256 entries per page */
-    s->iq &= ~0x7;
-    s->iq_enable = true;
-
-    /* Init head pointers */
-    tail_val = *((uint64_t *)&s->csr[DMAR_IQT_REG]);
-    *((uint64_t *)&s->csr[DMAR_IQH_REG]) = tail_val;
-    s->iq_head = s->iq_tail = (tail_val >> 4) & 0x7fff;
-    D(" -- address: 0x%lx size 0x%lx", s->iq, s->iq_sz);
-}
 
 
 static void vtd_root_table_setup(IntelIOMMUState *s)
@@ -549,15 +540,13 @@ static uint64_t vtd_context_cache_invalidate(IntelIOMMUState *s, uint64_t val)
         break;
 
     default:
-        fprintf(stderr, "vtd context-cache invalidation: wrong granularity\n");
+        D("error: wrong context-cache invalidation granularity");
         caig = 0;
     }
 
     return caig;
 }
 
-
-#define status_write(x) (((x) >> 5) & 1)
 
 /* Flush IOTLB
  * Returns the IOTLB Actual Invalidation Granularity.
@@ -585,22 +574,39 @@ static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
         break;
 
     default:
-        fprintf(stderr, "vtd iotlb flush: wrong granularity\n");
+        D("error: wrong iotlb flush granularity");
         iaig = 0;
     }
 
-    //print_root_table(s);
     return iaig;
 }
 
-/*static int handle_invalidate(IntelIOMMUState *s, uint16_t i)
+
+#if 0
+static void iommu_inv_queue_setup(IntelIOMMUState *s)
+{
+    uint64_t tail_val;
+    s->iq = *((uint64_t *)&s->csr[DMAR_IQA_REG]);
+    s->iq_sz = 0x100 << (s->iq & 0x7);  /* 256 entries per page */
+    s->iq &= ~0x7;
+    s->iq_enable = true;
+
+    /* Init head pointers */
+    tail_val = *((uint64_t *)&s->csr[DMAR_IQT_REG]);
+    *((uint64_t *)&s->csr[DMAR_IQH_REG]) = tail_val;
+    s->iq_head = s->iq_tail = (tail_val >> 4) & 0x7fff;
+    D(" -- address: 0x%lx size 0x%lx", s->iq, s->iq_sz);
+}
+
+
+static int handle_invalidate(IntelIOMMUState *s, uint16_t i)
 {
     intel_iommu_inv_desc entry;
     uint8_t type;
     dma_memory_read(&address_space_memory, s->iq + sizeof(entry) * i, &entry,
                     sizeof(entry));
     type = entry.lower & 0xf;
-    D(" Processing invalidate request %d - desc: %016lx.%016lx", i,
+    D("Processing invalidate request %d - desc: %016lx.%016lx", i,
       entry.upper, entry.lower);
     switch (type) {
     case CONTEXT_CACHE_INV_DESC:
@@ -620,10 +626,10 @@ static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
         D(" - not impl - ");
     }
     return 0;
-}*/
+}
 
 
-/*static void handle_iqt_write(IntelIOMMUState *s, uint64_t val)
+static void handle_iqt_write(IntelIOMMUState *s, uint64_t val)
 {
     s->iq_tail = (val >> 4) & 0x7fff;
     D("Write to IQT_REG new tail = %d", s->iq_tail);
@@ -632,7 +638,7 @@ static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
         return;
     }
 
-    //Process the invalidation queue
+    /* Process the invalidation queue */
     while (s->iq_head != s->iq_tail) {
         handle_invalidate(s, s->iq_head++);
         if (s->iq_head == s->iq_sz) {
@@ -642,15 +648,17 @@ static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
     *((uint64_t *)&s->csr[DMAR_IQH_REG]) = s->iq_head << 4;
 
     set_quad(s, DMAR_IQT_REG, val);
-}*/
+}
+#endif
 
+/* FIXME: Not implemented yet */
 static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
 {
     D("Queued Invalidation Enable %s", (en ? "on" : "off"));
 
-    if (en) {
+    /*if (en) {
         iommu_inv_queue_setup(s);
-    }
+    }*/
 
     /* Ok - report back to driver */
     set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_QIES);
@@ -680,7 +688,6 @@ static void handle_gcmd_te(IntelIOMMUState *s, bool en)
         /* Ok - report back to driver */
         set_mask_long(s, DMAR_GSTS_REG, VTD_GSTS_TES, 0);
     }
-    //print_root_table(s);
 }
 
 /* Handle write to Global Command Register */
@@ -689,6 +696,7 @@ static void handle_gcmd_write(IntelIOMMUState *s)
     uint32_t status = __get_long(s, DMAR_GSTS_REG);
     uint32_t val = __get_long(s, DMAR_GCMD_REG);
     uint32_t changed = status ^ val;
+
     D("value 0x%x status 0x%x", val, status);
     if (changed & VTD_GCMD_TE) {
         /* Translation enable/disable */
@@ -700,7 +708,7 @@ static void handle_gcmd_write(IntelIOMMUState *s)
         /* Queued Invalidation Enable */
         handle_gcmd_qie(s, val & VTD_GCMD_QIE);
     } else {
-        D("Unhandled gcmd write");
+        D("error: unhandled gcmd write");
     }
 }
 
@@ -745,8 +753,8 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
     uint64_t val;
 
     if (addr + size > DMAR_REG_SIZE) {
-        D("addr outside region: max 0x%x, got 0x%"PRIx64 " %d", DMAR_REG_SIZE,
-          addr, size);
+        D("error: addr outside region: max 0x%x, got 0x%"PRIx64 " %d",
+          DMAR_REG_SIZE, addr, size);
         return (uint64_t)-1;
     }
 
@@ -785,8 +793,8 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     IntelIOMMUState *s = opaque;
 
     if (addr + size > DMAR_REG_SIZE) {
-        D("addr outside region: max 0x%x, got 0x%"PRIx64 " %d", DMAR_REG_SIZE,
-          addr, size);
+        D("error: addr outside region: max 0x%x, got 0x%"PRIx64 " %d",
+          DMAR_REG_SIZE, addr, size);
         return;
     }
 
@@ -803,7 +811,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     /* Invalidation Queue Tail Register, 64-bit */
-/*    case DMAR_IQT_REG:
+    /*case DMAR_IQT_REG:
         if (size == 4) {
 
         }
@@ -819,12 +827,12 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
             }
         }
         handle_iqt_write(s, val);
-        break;
-*/
+        break;*/
+
     /* Context Command Register, 64-bit */
     case DMAR_CCMD_REG:
         D("DMAR_CCMD_REG write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
-          addr, size,val);
+          addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
         } else {
@@ -874,7 +882,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_FECTL_REG:
     /* Protected Memory Enable Register, 32-bit */
     case DMAR_PMEN_REG:
-        D("Known reg write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
+        D("known reg write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
           addr, size, val);
         set_long(s, addr, val);
         break;
@@ -886,7 +894,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
           addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
-        }else {
+        } else {
             set_quad(s, addr, val);
         }
         break;
@@ -899,8 +907,8 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     default:
-        D("Unhandled reg write addr 0x%"PRIx64 ", size %d, val 0x%"PRIx64,
-          addr, size, val);
+        D("error: unhandled reg write addr 0x%"PRIx64
+          ", size %d, val 0x%"PRIx64, addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
         } else {
@@ -927,7 +935,6 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
 
     if (!(__get_long(s, DMAR_GSTS_REG) & VTD_GSTS_TES)) {
         /* DMAR disabled, passthrough, use 4k-page*/
-        /* Fixme: not sure what is the page size */
         ret.iova = addr & VTD_PAGE_MASK_4K;
         ret.translated_addr = addr & VTD_PAGE_MASK_4K;
         ret.addr_mask = ~VTD_PAGE_MASK_4K;
@@ -935,18 +942,11 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
         return ret;
     }
 
-    // D("bus %d slot %d func %d devfn %d addr %"PRIx64 " iova %"PRIx64,
-    //   bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
-    //   ret.iova);
-
     iommu_translate(s, bus_num, devfn, addr, &ret);
 
-    // D("=========================================");
-    // print_root_table_all(s);
-
-    // D("bus %d slot %d func %d devfn %d addr %"PRIx64 " to_addr %"PRIx64,
-    //   bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
-    //   ret.translated_addr);
+    D("bus %d slot %d func %d devfn %d gpa %"PRIx64 " hpa %"PRIx64,
+      bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
+      ret.translated_addr);
     return ret;
 }
 
@@ -955,7 +955,7 @@ static const VMStateDescription vtd_vmstate = {
     .version_id = 1,
     .minimum_version_id = 1,
     .minimum_version_id_old = 1,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8_ARRAY(csr, IntelIOMMUState, DMAR_REG_SIZE),
         VMSTATE_END_OF_LIST()
     }
@@ -1128,7 +1128,8 @@ static void clean_address_space(IntelIOMMUState *s)
 static void vtd_reset(DeviceState *dev)
 {
     IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
-    D(" ");
+
+    D("");
     do_vtd_init(s);
 }
 
@@ -1164,7 +1165,7 @@ static const TypeInfo vtd_info = {
 
 static void vtd_register_types(void)
 {
-    D(" ");
+    D("");
     type_register_static(&vtd_info);
 }
 
