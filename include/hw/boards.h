@@ -111,6 +111,7 @@ struct MachineState {
     bool mem_merge;
     bool usb;
     char *firmware;
+    bool vtd;
 
     ram_addr_t ram_size;
     const char *boot_order;

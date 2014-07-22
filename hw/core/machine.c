@@ -235,6 +235,20 @@ static void machine_set_firmware(Object *obj, const char *value, Error **errp)
     ms->firmware = g_strdup(value);
 }
 
+static bool machine_get_vtd(Object *obj, Error **errp)
+{
+    MachineState *ms = MACHINE(obj);
+
+    return ms->vtd;
+}
+
+static void machine_set_vtd(Object *obj, bool value, Error **errp)
+{
+    MachineState *ms = MACHINE(obj);
+
+    ms->vtd = value;
+}
+
 static void machine_initfn(Object *obj)
 {
     object_property_add_str(obj, "accel",
@@ -270,10 +284,17 @@ static void machine_initfn(Object *obj)
                              machine_set_dump_guest_core,
                              NULL);
     object_property_add_bool(obj, "mem-merge",
-                             machine_get_mem_merge, machine_set_mem_merge, NULL);
-    object_property_add_bool(obj, "usb", machine_get_usb, machine_set_usb, NULL);
+                             machine_get_mem_merge,
+                             machine_set_mem_merge, NULL);
+    object_property_add_bool(obj, "usb",
+                             machine_get_usb,
+                             machine_set_usb, NULL);
     object_property_add_str(obj, "firmware",
-                            machine_get_firmware, machine_set_firmware, NULL);
+                            machine_get_firmware,
+                            machine_set_firmware, NULL);
+    object_property_add_bool(obj, "vtd",
+                             machine_get_vtd,
+                             machine_set_vtd, NULL);
 }
 
 static void machine_finalize(Object *obj)

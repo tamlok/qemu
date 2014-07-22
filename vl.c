@@ -382,6 +382,10 @@ static QemuOptsList qemu_machine_opts = {
             .name = "kvm-type",
             .type = QEMU_OPT_STRING,
             .help = "Specifies the KVM virtualization mode (HV, PR)",
+        },{
+            .name = "vtd",
+            .type = QEMU_OPT_BOOL,
+            .help = "Set on/off to enable/disable Intel IOMMU (VT-d)",
         },
         { /* End of list */ }
     },

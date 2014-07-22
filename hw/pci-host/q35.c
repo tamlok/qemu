@@ -428,7 +428,10 @@ static int mch_init(PCIDevice *d)
     }
 
     /* Intel IOMMU (VT-d) */
-    mch_init_dmar(mch);
+    if (qemu_opt_get_bool(qemu_get_machine_opts(), "vtd", false)) {
+        mch_init_dmar(mch);
+    }
+
     return 0;
 }
 
