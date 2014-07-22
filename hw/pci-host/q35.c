@@ -361,33 +361,23 @@ static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
         /* No corresponding free() */
         pvtd_as = g_malloc0(sizeof(VTDAddressSpace *) *
                             VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX);
-        if (!pvtd_as) {
-            fprintf(stderr, "error: q35 fail to alloc memory for vtd\n");
-            abort();
-        }
         s->address_spaces[bus_num] = pvtd_as;
     }
 
     vtd_as = *(pvtd_as + devfn);
     if (!vtd_as) {
         vtd_as = g_malloc0(sizeof(*vtd_as));
-        if (!vtd_as) {
-            fprintf(stderr, "error: q35 fail to alloc memory for vtd\n");
-            abort();
-        }
         *(pvtd_as + devfn) = vtd_as;
 
         vtd_as->bus_num = bus_num;
         vtd_as->devfn = devfn;
         vtd_as->iommu_state = s;
-        memory_region_init_iommu(&(vtd_as->iommu), OBJECT(s), &(s->iommu_ops),
+        memory_region_init_iommu(&vtd_as->iommu, OBJECT(s), &s->iommu_ops,
                                  "intel_iommu", UINT64_MAX);
-        address_space_init(&(vtd_as->as), &(vtd_as->iommu), "intel_iommu");
+        address_space_init(&vtd_as->as, &vtd_as->iommu, "intel_iommu");
     }
 
-    fprintf(stderr, "bus %d slot %d func %d devfn %d request address space\n",
-            bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), devfn);
-    return &(vtd_as->as);
+    return &vtd_as->as;
 }
 
 static void mch_init_dmar(MCHPCIState *mch)
@@ -405,7 +395,8 @@ static void mch_init_dmar(MCHPCIState *mch)
         return;
     }
 
-    memory_region_add_subregion(mch->pci_address_space, Q35_HOST_BRIDGE_IOMMU_ADDR, 
+    memory_region_add_subregion(mch->pci_address_space,
+                                Q35_HOST_BRIDGE_IOMMU_ADDR,
                                 &mch->iommu->csrmem);
     pci_setup_iommu(pci_bus, q35_host_dma_iommu, mch->iommu);
 }
@@ -427,15 +418,16 @@ static int mch_init(PCIDevice *d)
     memory_region_add_subregion_overlap(mch->system_memory, 0xa0000,
                                         &mch->smram_region, 1);
     memory_region_set_enabled(&mch->smram_region, false);
-    init_pam(DEVICE(mch), mch->ram_memory, mch->system_memory, mch->pci_address_space,
-             &mch->pam_regions[0], PAM_BIOS_BASE, PAM_BIOS_SIZE);
+    init_pam(DEVICE(mch), mch->ram_memory, mch->system_memory,
+             mch->pci_address_space, &mch->pam_regions[0], PAM_BIOS_BASE,
+             PAM_BIOS_SIZE);
     for (i = 0; i < 12; ++i) {
-        init_pam(DEVICE(mch), mch->ram_memory, mch->system_memory, mch->pci_address_space,
-                 &mch->pam_regions[i+1], PAM_EXPAN_BASE + i * PAM_EXPAN_SIZE,
-                 PAM_EXPAN_SIZE);
+        init_pam(DEVICE(mch), mch->ram_memory, mch->system_memory,
+                 mch->pci_address_space, &mch->pam_regions[i+1],
+                 PAM_EXPAN_BASE + i * PAM_EXPAN_SIZE, PAM_EXPAN_SIZE);
     }
 
-    /* DMAR device(s) (IOMMUs) */
+    /* Intel IOMMU (VT-d) */
     mch_init_dmar(mch);
     return 0;
 }
