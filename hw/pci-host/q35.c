@@ -347,6 +347,61 @@ static void mch_reset(DeviceState *qdev)
     mch_update(mch);
 }
 
+static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
+{
+    IntelIOMMUState *s = opaque;
+    VTDAddressSpace **pvtd_as;
+    VTDAddressSpace *vtd_as;
+    int bus_num = pci_bus_num(bus);
+
+    assert(devfn >= 0);
+
+    pvtd_as = s->address_spaces[bus_num];
+    if (!pvtd_as) {
+        /* No corresponding free() */
+        pvtd_as = g_malloc0(sizeof(VTDAddressSpace *) *
+                            VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX);
+        s->address_spaces[bus_num] = pvtd_as;
+    }
+
+    vtd_as = *(pvtd_as + devfn);
+    if (!vtd_as) {
+        vtd_as = g_malloc0(sizeof(*vtd_as));
+        *(pvtd_as + devfn) = vtd_as;
+
+        vtd_as->bus_num = bus_num;
+        vtd_as->devfn = devfn;
+        vtd_as->iommu_state = s;
+        memory_region_init_iommu(&vtd_as->iommu, OBJECT(s), &s->iommu_ops,
+                                 "intel_iommu", UINT64_MAX);
+        address_space_init(&vtd_as->as, &vtd_as->iommu, "intel_iommu");
+    }
+
+    return &vtd_as->as;
+}
+
+static void mch_init_dmar(MCHPCIState *mch)
+{
+    Error *error = NULL;
+    PCIBus *pci_bus = PCI_BUS(qdev_get_parent_bus(DEVICE(mch)));
+
+    mch->iommu = INTEL_IOMMU_DEVICE(object_new(TYPE_INTEL_IOMMU_DEVICE));
+    qdev_set_parent_bus(DEVICE(mch->iommu), sysbus_get_default());
+    object_property_set_bool(OBJECT(mch->iommu), true, "realized", &error);
+
+    if (error) {
+        fprintf(stderr, "%s\n", error_get_pretty(error));
+        error_free(error);
+        return;
+    }
+
+    memory_region_add_subregion(mch->pci_address_space,
+                                Q35_HOST_BRIDGE_IOMMU_ADDR,
+                                &mch->iommu->csrmem);
+    pci_setup_iommu(pci_bus, q35_host_dma_iommu, mch->iommu);
+}
+
+
 static int mch_init(PCIDevice *d)
 {
     int i;
@@ -363,13 +418,20 @@ static int mch_init(PCIDevice *d)
     memory_region_add_subregion_overlap(mch->system_memory, 0xa0000,
                                         &mch->smram_region, 1);
     memory_region_set_enabled(&mch->smram_region, false);
-    init_pam(DEVICE(mch), mch->ram_memory, mch->system_memory, mch->pci_address_space,
-             &mch->pam_regions[0], PAM_BIOS_BASE, PAM_BIOS_SIZE);
+    init_pam(DEVICE(mch), mch->ram_memory, mch->system_memory,
+             mch->pci_address_space, &mch->pam_regions[0], PAM_BIOS_BASE,
+             PAM_BIOS_SIZE);
     for (i = 0; i < 12; ++i) {
-        init_pam(DEVICE(mch), mch->ram_memory, mch->system_memory, mch->pci_address_space,
-                 &mch->pam_regions[i+1], PAM_EXPAN_BASE + i * PAM_EXPAN_SIZE,
-                 PAM_EXPAN_SIZE);
+        init_pam(DEVICE(mch), mch->ram_memory, mch->system_memory,
+                 mch->pci_address_space, &mch->pam_regions[i+1],
+                 PAM_EXPAN_BASE + i * PAM_EXPAN_SIZE, PAM_EXPAN_SIZE);
     }
+
+    /* Intel IOMMU (VT-d) */
+    if (qemu_opt_get_bool(qemu_get_machine_opts(), "vtd", false)) {
+        mch_init_dmar(mch);
+    }
+
     return 0;
 }
 

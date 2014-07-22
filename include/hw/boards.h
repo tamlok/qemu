@@ -123,6 +123,7 @@ struct MachineState {
     bool mem_merge;
     bool usb;
     char *firmware;
+    bool vtd;
 
     ram_addr_t ram_size;
     ram_addr_t maxram_size;
