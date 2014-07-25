@@ -253,27 +253,27 @@ typedef struct intel_iommu_inv_desc {
  * 12-63: Context-table Pointer
  * 64-127: Reserved
  */
-struct vtd_root_entry {
+struct VTDRootEntry {
     uint64_t val;
     uint64_t rsvd;
 };
-typedef struct vtd_root_entry vtd_root_entry;
+typedef struct VTDRootEntry VTDRootEntry;
 
-/* Masks for struct vtd_root_entry */
+/* Masks for struct VTDRootEntry */
 #define VTD_ROOT_ENTRY_P (1ULL << 0)
 #define VTD_ROOT_ENTRY_CTP  (~0xfffULL)
 
-#define VTD_ROOT_ENTRY_NR   (VTD_PAGE_SIZE / sizeof(vtd_root_entry))
+#define VTD_ROOT_ENTRY_NR   (VTD_PAGE_SIZE / sizeof(VTDRootEntry))
 
 
 /* Context-Entry */
-struct vtd_context_entry {
+struct VTDContextEntry {
     uint64_t lo;
     uint64_t hi;
 };
-typedef struct vtd_context_entry vtd_context_entry;
+typedef struct VTDContextEntry VTDContextEntry;
 
-/* Masks for struct vtd_context_entry */
+/* Masks for struct VTDContextEntry */
 /* lo */
 #define VTD_CONTEXT_ENTRY_P (1ULL << 0)
 #define VTD_CONTEXT_ENTRY_FPD   (1ULL << 1) /* Fault Processing Disable */
@@ -289,7 +289,7 @@ typedef struct vtd_context_entry vtd_context_entry;
 #define VTD_CONTEXT_ENTRY_DID   (0xffffULL << 8)    /* Domain Identifier */
 
 
-#define VTD_CONTEXT_ENTRY_NR    (VTD_PAGE_SIZE / sizeof(vtd_context_entry))
+#define VTD_CONTEXT_ENTRY_NR    (VTD_PAGE_SIZE / sizeof(VTDContextEntry))
 
 
 /* Paging Structure common */

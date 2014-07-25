@@ -124,12 +124,12 @@ static inline uint64_t set_clear_mask_quad(IntelIOMMUState *s, hwaddr addr,
     return val;
 }
 
-static inline bool root_entry_present(vtd_root_entry *root)
+static inline bool root_entry_present(VTDRootEntry *root)
 {
     return root->val & VTD_ROOT_ENTRY_P;
 }
 
-static bool get_root_entry(IntelIOMMUState *s, int index, vtd_root_entry *re)
+static bool get_root_entry(IntelIOMMUState *s, int index, VTDRootEntry *re)
 {
     dma_addr_t addr;
 
@@ -143,13 +143,13 @@ static bool get_root_entry(IntelIOMMUState *s, int index, vtd_root_entry *re)
     return true;
 }
 
-static inline bool context_entry_present(vtd_context_entry *context)
+static inline bool context_entry_present(VTDContextEntry *context)
 {
     return context->lo & VTD_CONTEXT_ENTRY_P;
 }
 
-static bool get_context_entry_from_root(vtd_root_entry *root, int index,
-                                        vtd_context_entry *ce)
+static bool get_context_entry_from_root(VTDRootEntry *root, int index,
+                                        VTDContextEntry *ce)
 {
     dma_addr_t addr;
 
@@ -170,7 +170,7 @@ static bool get_context_entry_from_root(vtd_root_entry *root, int index,
     return true;
 }
 
-static inline dma_addr_t get_slpt_base_from_context(vtd_context_entry *ce)
+static inline dma_addr_t get_slpt_base_from_context(VTDContextEntry *ce)
 {
     return ce->lo & VTD_CONTEXT_ENTRY_SLPTPTR;
 }
@@ -243,7 +243,7 @@ static inline int gpa_level_offset(uint64_t gpa, int level)
 /* Get the page-table level that hardware should use for the second-level
  * page-table walk from the Address Width field of context-entry.
  */
-static inline int get_level_from_context_entry(vtd_context_entry *ce)
+static inline int get_level_from_context_entry(VTDContextEntry *ce)
 {
     return 2 + (ce->hi & VTD_CONTEXT_ENTRY_AW);
 }
@@ -251,7 +251,7 @@ static inline int get_level_from_context_entry(vtd_context_entry *ce)
 /* Given the @gpa, return relevant slpte. @slpte_level will be the last level
  * of the translation, can be used for deciding the size of large page.
  */
-static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa,
+static uint64_t gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
                              int *slpte_level)
 {
     dma_addr_t addr = get_slpt_base_from_context(ce);
@@ -287,8 +287,8 @@ static uint64_t gpa_to_slpte(vtd_context_entry *ce, uint64_t gpa,
 static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
                             hwaddr addr, IOMMUTLBEntry *entry)
 {
-    vtd_root_entry re;
-    vtd_context_entry ce;
+    VTDRootEntry re;
+    VTDContextEntry ce;
     uint64_t slpte;
     int level;
     uint64_t page_mask = VTD_PAGE_MASK_4K;
