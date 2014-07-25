@@ -136,10 +136,9 @@ static bool get_root_entry(IntelIOMMUState *s, int index, vtd_root_entry *re)
     assert(index >= 0 && index < ROOT_ENTRY_NR);
 
     addr = s->root + index * sizeof(*re);
-    if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
-        fprintf(stderr, "(vtd)error: fail to read root table\n");
-        return false;
-    }
+
+    assert(!dma_memory_read(&address_space_memory, addr, re, sizeof(*re)));
+
     re->val = le64_to_cpu(re->val);
     return true;
 }
@@ -163,10 +162,9 @@ static bool get_context_entry_from_root(vtd_root_entry *root, int index,
     assert(index >= 0 && index < CONTEXT_ENTRY_NR);
 
     addr = (root->val & ROOT_ENTRY_CTP) + index * sizeof(*ce);
-    if (dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce))) {
-        fprintf(stderr, "(vtd)error: fail to read context table\n");
-        return false;
-    }
+
+    assert(!dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce)));
+
     ce->lo = le64_to_cpu(ce->lo);
     ce->hi = le64_to_cpu(ce->hi);
     return true;
@@ -226,12 +224,10 @@ static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
 
     assert(index >= 0 && index < SL_PT_ENTRY_NR);
 
-    if (dma_memory_read(&address_space_memory,
-                        base_addr + index * sizeof(slpte), &slpte,
-                        sizeof(slpte))) {
-        fprintf(stderr, "(vtd)error: fail to read slpte\n");
-        return (uint64_t)-1;
-    }
+    assert(!dma_memory_read(&address_space_memory,
+                            base_addr + index * sizeof(slpte), &slpte,
+                            sizeof(slpte)));
+
     slpte = le64_to_cpu(slpte);
     return slpte;
 }
