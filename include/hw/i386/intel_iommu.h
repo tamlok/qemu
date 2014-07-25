@@ -2,7 +2,7 @@
  * QEMU emulation of an Intel IOMMU (VT-d)
  *   (DMA Remapping device)
  *
- * Copyright (c) 2013 Knut Omang, Oracle <knut.omang@oracle.com>
+ * Copyright (C) 2013 Knut Omang, Oracle <knut.omang@oracle.com>
  * Copyright (C) 2014 Le Tan, <tamlokveer@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -15,9 +15,8 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
 
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * Lots of defines copied from kernel/include/linux/intel-iommu.h:
  *   Copyright (C) 2006-2008 Intel Corporation
