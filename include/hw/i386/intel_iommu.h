@@ -108,7 +108,7 @@
 
 /* FRCD */
 #define DMAR_FRCD_REG_OFFSET 0x220 /* Offset to the Fault Recording Registers */
-#define DMAR_FRCD_REG_NR 1 /* Num of Fault Recording Registers */
+#define DMAR_FRCD_REG_NR 1ULL /* Num of Fault Recording Registers */
 
 #define DMAR_REG_SIZE   (DMAR_FRCD_REG_OFFSET + 128 * DMAR_FRCD_REG_NR)
 
@@ -159,17 +159,6 @@ typedef struct intel_iommu_inv_desc {
 } intel_iommu_inv_desc;
 
 
-/* Invalidate descriptor types */
-#define CONTEXT_CACHE_INV_DESC  0x1
-#define PASID_CACHE_INV_DESC    0x7
-#define IOTLB_INV_DESC          0x2
-#define EXT_IOTLB_INV_DESC      0x6
-#define DEV_TLB_INV_DESC        0x3
-#define EXT_DEV_TLB_INV_DESC    0x8
-#define INT_ENTRY_INV_DESC      0x4
-#define INV_WAIT_DESC           0x5
-
-
 /* IOTLB_REG */
 #define VTD_TLB_GLOBAL_FLUSH (1ULL << 60) /* Global invalidation */
 #define VTD_TLB_DSI_FLUSH (2ULL << 60)  /* Domain-selective invalidation */
@@ -185,22 +174,6 @@ typedef struct intel_iommu_inv_desc {
 #define VTD_TLB_IVT (1ULL << 63)
 #define VTD_TLB_IH_NONLEAF (1ULL << 6)
 #define VTD_TLB_MAX_SIZE (0x3f)
-
-/* INVALID_DESC */
-#define DMA_CCMD_INVL_GRANU_OFFSET  61
-#define DMA_ID_TLB_GLOBAL_FLUSH (((uint64_t)1) << 3)
-#define DMA_ID_TLB_DSI_FLUSH    (((uint64_t)2) << 3)
-#define DMA_ID_TLB_PSI_FLUSH    (((uint64_t)3) << 3)
-#define DMA_ID_TLB_READ_DRAIN   (((uint64_t)1) << 7)
-#define DMA_ID_TLB_WRITE_DRAIN  (((uint64_t)1) << 6)
-#define DMA_ID_TLB_DID(id)  (((uint64_t)((id & 0xffff) << 16)))
-#define DMA_ID_TLB_IH_NONLEAF   (((uint64_t)1) << 6)
-#define DMA_ID_TLB_ADDR(addr)   (addr)
-#define DMA_ID_TLB_ADDR_MASK(mask)  (mask)
-
-/* PMEN_REG */
-#define DMA_PMEN_EPM (((uint32_t)1)<<31)
-#define DMA_PMEN_PRS (((uint32_t)1)<<0)
 
 /* GCMD_REG */
 #define VTD_GCMD_TE (1UL << 31)
@@ -242,30 +215,17 @@ typedef struct intel_iommu_inv_desc {
 #define VTD_CCMD_SID(s) (((uint64_t)((s) & 0xffffULL)) << 16)
 #define VTD_CCMD_DID(d) ((uint64_t)((d) & 0xffffULL))
 
-/* FECTL_REG */
-#define DMA_FECTL_IM (((uint32_t)1) << 31)
-
-/* FSTS_REG */
-#define DMA_FSTS_PPF ((uint32_t)2)
-#define DMA_FSTS_PFO ((uint32_t)1)
-#define DMA_FSTS_IQE (1 << 4)
-#define DMA_FSTS_ICE (1 << 5)
-#define DMA_FSTS_ITE (1 << 6)
-#define dma_fsts_fault_record_index(s) (((s) >> 8) & 0xff)
-
 /* RTADDR_REG */
 #define VTD_RTADDR_RTT (1ULL << 11)
-
 
 /* ECAP_REG */
 #define VTD_ECAP_IRO (DMAR_IOTLB_REG_OFFSET << 4)   /* (val >> 4) << 8 */
 
 /* CAP_REG */
-
 /* (val >> 4) << 24 */
-#define VTD_CAP_FRO     ((uint64_t)DMAR_FRCD_REG_OFFSET << 20)
+#define VTD_CAP_FRO     (DMAR_FRCD_REG_OFFSET << 20)
 
-#define VTD_CAP_NFR     ((uint64_t)(DMAR_FRCD_REG_NR - 1) << 40)
+#define VTD_CAP_NFR     ((DMAR_FRCD_REG_NR - 1) << 40)
 #define VTD_DOMAIN_ID_SHIFT     16  /* 16-bit domain id for 64K domains */
 #define VTD_CAP_ND  (((VTD_DOMAIN_ID_SHIFT - 4) / 2) & 7ULL)
 #define VTD_MGAW    39  /* Maximum Guest Address Width */
@@ -278,14 +238,14 @@ typedef struct intel_iommu_inv_desc {
 
 /* Pagesize of VTD paging structures, including root and context tables */
 #define VTD_PAGE_SHIFT      (12)
-#define VTD_PAGE_SIZE       (1UL << VTD_PAGE_SHIFT)
+#define VTD_PAGE_SIZE       (1ULL << VTD_PAGE_SHIFT)
 
 #define VTD_PAGE_SHIFT_4K   (12)
 #define VTD_PAGE_MASK_4K    (~((1ULL << VTD_PAGE_SHIFT_4K) - 1))
 #define VTD_PAGE_SHIFT_2M   (21)
-#define VTD_PAGE_MASK_2M    (~((1UL << VTD_PAGE_SHIFT_2M) - 1))
+#define VTD_PAGE_MASK_2M    (~((1ULL << VTD_PAGE_SHIFT_2M) - 1))
 #define VTD_PAGE_SHIFT_1G   (30)
-#define VTD_PAGE_MASK_1G    (~((1UL << VTD_PAGE_SHIFT_1G) - 1))
+#define VTD_PAGE_MASK_1G    (~((1ULL << VTD_PAGE_SHIFT_1G) - 1))
 
 /* Root-Entry
  * 0: Present
@@ -300,10 +260,10 @@ struct vtd_root_entry {
 typedef struct vtd_root_entry vtd_root_entry;
 
 /* Masks for struct vtd_root_entry */
-#define ROOT_ENTRY_P (1ULL << 0)
-#define ROOT_ENTRY_CTP  (~0xfffULL)
+#define VTD_ROOT_ENTRY_P (1ULL << 0)
+#define VTD_ROOT_ENTRY_CTP  (~0xfffULL)
 
-#define ROOT_ENTRY_NR   (VTD_PAGE_SIZE / sizeof(vtd_root_entry))
+#define VTD_ROOT_ENTRY_NR   (VTD_PAGE_SIZE / sizeof(vtd_root_entry))
 
 
 /* Context-Entry */
@@ -315,35 +275,35 @@ typedef struct vtd_context_entry vtd_context_entry;
 
 /* Masks for struct vtd_context_entry */
 /* lo */
-#define CONTEXT_ENTRY_P (1ULL << 0)
-#define CONTEXT_ENTRY_FPD   (1ULL << 1) /* Fault Processing Disable */
-#define CONTEXT_ENTRY_TT    (3ULL << 2) /* Translation Type */
-#define CONTEXT_TT_MULTI_LEVEL  (0)
-#define CONTEXT_TT_DEV_IOTLB    (1)
-#define CONTEXT_TT_PASS_THROUGH (2)
+#define VTD_CONTEXT_ENTRY_P (1ULL << 0)
+#define VTD_CONTEXT_ENTRY_FPD   (1ULL << 1) /* Fault Processing Disable */
+#define VTD_CONTEXT_ENTRY_TT    (3ULL << 2) /* Translation Type */
+#define VTD_CONTEXT_TT_MULTI_LEVEL  (0)
+#define VTD_CONTEXT_TT_DEV_IOTLB    (1)
+#define VTD_CONTEXT_TT_PASS_THROUGH (2)
 /* Second Level Page Translation Pointer*/
-#define CONTEXT_ENTRY_SLPTPTR   (~0xfffULL)
+#define VTD_CONTEXT_ENTRY_SLPTPTR   (~0xfffULL)
 
 /* hi */
-#define CONTEXT_ENTRY_AW    (7ULL) /* Adjusted guest-address-width */
-#define CONTEXT_ENTRY_DID   (0xffffULL << 8)    /* Domain Identifier */
+#define VTD_CONTEXT_ENTRY_AW    (7ULL) /* Adjusted guest-address-width */
+#define VTD_CONTEXT_ENTRY_DID   (0xffffULL << 8)    /* Domain Identifier */
 
 
-#define CONTEXT_ENTRY_NR    (VTD_PAGE_SIZE / sizeof(vtd_context_entry))
+#define VTD_CONTEXT_ENTRY_NR    (VTD_PAGE_SIZE / sizeof(vtd_context_entry))
 
 
 /* Paging Structure common */
-#define SL_PT_PAGE_SIZE_MASK   (1ULL << 7)
-#define SL_LEVEL_BITS   9   /* Bits to decide the offset for each level */
+#define VTD_SL_PT_PAGE_SIZE_MASK   (1ULL << 7)
+#define VTD_SL_LEVEL_BITS   9   /* Bits to decide the offset for each level */
 
 /* Second Level Paging Structure */
-#define SL_PML4_LEVEL 4
-#define SL_PDP_LEVEL 3
-#define SL_PD_LEVEL 2
-#define SL_PT_LEVEL 1
+#define VTD_SL_PML4_LEVEL 4
+#define VTD_SL_PDP_LEVEL 3
+#define VTD_SL_PD_LEVEL 2
+#define VTD_SL_PT_LEVEL 1
 
-#define SL_PT_ENTRY_NR  512
-#define SL_PT_BASE_ADDR_MASK  (~(uint64_t)(VTD_PAGE_SIZE - 1))
+#define VTD_SL_PT_ENTRY_NR  512
+#define VTD_SL_PT_BASE_ADDR_MASK  (~(VTD_PAGE_SIZE - 1))
 
 
 #endif

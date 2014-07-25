@@ -126,14 +126,14 @@ static inline uint64_t set_clear_mask_quad(IntelIOMMUState *s, hwaddr addr,
 
 static inline bool root_entry_present(vtd_root_entry *root)
 {
-    return root->val & ROOT_ENTRY_P;
+    return root->val & VTD_ROOT_ENTRY_P;
 }
 
 static bool get_root_entry(IntelIOMMUState *s, int index, vtd_root_entry *re)
 {
     dma_addr_t addr;
 
-    assert(index >= 0 && index < ROOT_ENTRY_NR);
+    assert(index >= 0 && index < VTD_ROOT_ENTRY_NR);
 
     addr = s->root + index * sizeof(*re);
 
@@ -145,7 +145,7 @@ static bool get_root_entry(IntelIOMMUState *s, int index, vtd_root_entry *re)
 
 static inline bool context_entry_present(vtd_context_entry *context)
 {
-    return context->lo & CONTEXT_ENTRY_P;
+    return context->lo & VTD_CONTEXT_ENTRY_P;
 }
 
 static bool get_context_entry_from_root(vtd_root_entry *root, int index,
@@ -159,9 +159,9 @@ static bool get_context_entry_from_root(vtd_root_entry *root, int index,
         return false;
     }
 
-    assert(index >= 0 && index < CONTEXT_ENTRY_NR);
+    assert(index >= 0 && index < VTD_CONTEXT_ENTRY_NR);
 
-    addr = (root->val & ROOT_ENTRY_CTP) + index * sizeof(*ce);
+    addr = (root->val & VTD_ROOT_ENTRY_CTP) + index * sizeof(*ce);
 
     assert(!dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce)));
 
@@ -172,13 +172,13 @@ static bool get_context_entry_from_root(vtd_root_entry *root, int index,
 
 static inline dma_addr_t get_slpt_base_from_context(vtd_context_entry *ce)
 {
-    return ce->lo & CONTEXT_ENTRY_SLPTPTR;
+    return ce->lo & VTD_CONTEXT_ENTRY_SLPTPTR;
 }
 
 /* The shift of an addr for a certain level of paging structure */
 static inline int slpt_level_shift(int level)
 {
-    return VTD_PAGE_SHIFT_4K + (level - 1) * SL_LEVEL_BITS;
+    return VTD_PAGE_SHIFT_4K + (level - 1) * VTD_SL_LEVEL_BITS;
 }
 
 static inline bool slpte_present(uint64_t slpte)
@@ -196,19 +196,19 @@ static inline uint64_t get_slpt_gpa(uint64_t addr, int index, int level)
 
 static inline uint64_t get_slpte_addr(uint64_t slpte)
 {
-    return slpte & SL_PT_BASE_ADDR_MASK;
+    return slpte & VTD_SL_PT_BASE_ADDR_MASK;
 }
 
 /* Whether the pte points to a large page */
 static inline bool is_large_pte(uint64_t pte)
 {
-    return pte & SL_PT_PAGE_SIZE_MASK;
+    return pte & VTD_SL_PT_PAGE_SIZE_MASK;
 }
 
 /* Whether the pte indicates the address of the page frame */
 static inline bool is_last_slpte(uint64_t slpte, int level)
 {
-    if (level == SL_PT_LEVEL) {
+    if (level == VTD_SL_PT_LEVEL) {
         return true;
     }
     if (is_large_pte(slpte)) {
@@ -222,7 +222,7 @@ static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
 {
     uint64_t slpte;
 
-    assert(index >= 0 && index < SL_PT_ENTRY_NR);
+    assert(index >= 0 && index < VTD_SL_PT_ENTRY_NR);
 
     assert(!dma_memory_read(&address_space_memory,
                             base_addr + index * sizeof(slpte), &slpte,
@@ -237,7 +237,7 @@ static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
  */
 static inline int gpa_level_offset(uint64_t gpa, int level)
 {
-    return (gpa >> slpt_level_shift(level)) & ((1ULL << SL_LEVEL_BITS) - 1);
+    return (gpa >> slpt_level_shift(level)) & ((1ULL << VTD_SL_LEVEL_BITS) - 1);
 }
 
 /* Get the page-table level that hardware should use for the second-level
@@ -245,7 +245,7 @@ static inline int gpa_level_offset(uint64_t gpa, int level)
  */
 static inline int get_level_from_context_entry(vtd_context_entry *ce)
 {
-    return 2 + (ce->hi & CONTEXT_ENTRY_AW);
+    return 2 + (ce->hi & VTD_CONTEXT_ENTRY_AW);
 }
 
 /* Given the @gpa, return relevant slpte. @slpte_level will be the last level
@@ -322,7 +322,7 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
     }
 
     if (is_large_pte(slpte)) {
-        if (level == SL_PDP_LEVEL) {
+        if (level == VTD_SL_PDP_LEVEL) {
             /* 1-GB page */
             page_mask = VTD_PAGE_MASK_1G;
         } else {
