@@ -34,94 +34,92 @@
 #endif
 
 static inline void define_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val,
-                        uint64_t wmask, uint64_t w1cmask)
+                               uint64_t wmask, uint64_t w1cmask)
 {
-    *((uint64_t *)&s->csr[addr]) = val;
-    *((uint64_t *)&s->wmask[addr]) = wmask;
-    *((uint64_t *)&s->w1cmask[addr]) = w1cmask;
+    stq_le_p(&s->csr[addr], val);
+    stq_le_p(&s->wmask[addr], wmask);
+    stq_le_p(&s->w1cmask[addr], w1cmask);
 }
 
 static inline void define_quad_wo(IntelIOMMUState *s, hwaddr addr,
                                   uint64_t mask)
 {
-    *((uint64_t *)&s->womask[addr]) = mask;
+    stq_le_p(&s->womask[addr], mask);
 }
 
 static inline void define_long(IntelIOMMUState *s, hwaddr addr, uint32_t val,
-                        uint32_t wmask, uint32_t w1cmask)
+                               uint32_t wmask, uint32_t w1cmask)
 {
-    *((uint32_t *)&s->csr[addr]) = val;
-    *((uint32_t *)&s->wmask[addr]) = wmask;
-    *((uint32_t *)&s->w1cmask[addr]) = w1cmask;
+    stl_le_p(&s->csr[addr], val);
+    stl_le_p(&s->wmask[addr], wmask);
+    stl_le_p(&s->w1cmask[addr], w1cmask);
 }
 
 static inline void define_long_wo(IntelIOMMUState *s, hwaddr addr,
                                   uint32_t mask)
 {
-    *((uint32_t *)&s->womask[addr]) = mask;
+    stl_le_p(&s->womask[addr], mask);
 }
 
 /* "External" get/set operations */
 static inline void set_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val)
 {
-    uint64_t oldval = *((uint64_t *)&s->csr[addr]);
-    uint64_t wmask = *((uint64_t *)&s->wmask[addr]);
-    uint64_t w1cmask = *((uint64_t *)&s->w1cmask[addr]);
-    *((uint64_t *)&s->csr[addr]) =
-        ((oldval & ~wmask) | (val & wmask)) & ~(w1cmask & val);
+    uint64_t oldval = ldq_le_p(&s->csr[addr]);
+    uint64_t wmask = ldq_le_p(&s->wmask[addr]);
+    uint64_t w1cmask = ldq_le_p(&s->w1cmask[addr]);
+    stq_le_p(&s->csr[addr],
+             ((oldval & ~wmask) | (val & wmask)) & ~(w1cmask & val));
 }
 
 static inline void set_long(IntelIOMMUState *s, hwaddr addr, uint32_t val)
 {
-    uint32_t oldval = *((uint32_t *)&s->csr[addr]);
-    uint32_t wmask = *((uint32_t *)&s->wmask[addr]);
-    uint32_t w1cmask = *((uint32_t *)&s->w1cmask[addr]);
-    *((uint32_t *)&s->csr[addr]) =
-        ((oldval & ~wmask) | (val & wmask)) & ~(w1cmask & val);
+    uint32_t oldval = ldl_le_p(&s->csr[addr]);
+    uint32_t wmask = ldl_le_p(&s->wmask[addr]);
+    uint32_t w1cmask = ldl_le_p(&s->w1cmask[addr]);
+    stl_le_p(&s->csr[addr],
+             ((oldval & ~wmask) | (val & wmask)) & ~(w1cmask & val));
 }
 
 static inline uint64_t get_quad(IntelIOMMUState *s, hwaddr addr)
 {
-    uint64_t val = *((uint64_t *)&s->csr[addr]);
-    uint64_t womask = *((uint64_t *)&s->womask[addr]);
+    uint64_t val = ldq_le_p(&s->csr[addr]);
+    uint64_t womask = ldq_le_p(&s->womask[addr]);
     return val & ~womask;
 }
 
 
 static inline uint32_t get_long(IntelIOMMUState *s, hwaddr addr)
 {
-    uint32_t val = *((uint32_t *)&s->csr[addr]);
-    uint32_t womask = *((uint32_t *)&s->womask[addr]);
+    uint32_t val = ldl_le_p(&s->csr[addr]);
+    uint32_t womask = ldl_le_p(&s->womask[addr]);
     return val & ~womask;
 }
 
 /* "Internal" get/set operations */
 static inline uint64_t get_quad_raw(IntelIOMMUState *s, hwaddr addr)
 {
-    return *((uint64_t *)&s->csr[addr]);
+    return ldq_le_p(&s->csr[addr]);
 }
 
 static inline uint32_t get_long_raw(IntelIOMMUState *s, hwaddr addr)
 {
-    return *((uint32_t *)&s->csr[addr]);
+    return ldl_le_p(&s->csr[addr]);
 }
 
 static inline uint32_t set_clear_mask_long(IntelIOMMUState *s, hwaddr addr,
                                            uint32_t clear, uint32_t mask)
 {
-    uint32_t *ptr = (uint32_t *)&s->csr[addr];
-    uint32_t val = (*ptr & ~clear) | mask;
-    *ptr = val;
-    return val;
+    uint32_t new_val = (ldl_le_p(&s->csr[addr]) & ~clear) | mask;
+    stl_le_p(&s->csr[addr], new_val);
+    return new_val;
 }
 
 static inline uint64_t set_clear_mask_quad(IntelIOMMUState *s, hwaddr addr,
                                            uint64_t clear, uint64_t mask)
 {
-    uint64_t *ptr = (uint64_t *)&s->csr[addr];
-    uint64_t val = (*ptr & ~clear) | mask;
-    *ptr = val;
-    return val;
+    uint64_t new_val = (ldq_le_p(&s->csr[addr]) & ~clear) | mask;
+    stq_le_p(&s->csr[addr], new_val);
+    return new_val;
 }
 
 static inline bool root_entry_present(VTDRootEntry *root)
