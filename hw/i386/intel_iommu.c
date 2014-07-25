@@ -96,20 +96,18 @@ static inline uint32_t get_long(IntelIOMMUState *s, hwaddr addr)
 }
 
 /* "Internal" get/set operations */
-static inline uint64_t __get_quad(IntelIOMMUState *s, hwaddr addr)
+static inline uint64_t get_quad_raw(IntelIOMMUState *s, hwaddr addr)
 {
     return *((uint64_t *)&s->csr[addr]);
 }
 
-static inline uint32_t __get_long(IntelIOMMUState *s, hwaddr addr)
+static inline uint32_t get_long_raw(IntelIOMMUState *s, hwaddr addr)
 {
     return *((uint32_t *)&s->csr[addr]);
 }
 
-
-/* val = (val & ~clear) | mask */
-static inline uint32_t set_mask_long(IntelIOMMUState *s, hwaddr addr,
-                                     uint32_t clear, uint32_t mask)
+static inline uint32_t set_clear_mask_long(IntelIOMMUState *s, hwaddr addr,
+                                           uint32_t clear, uint32_t mask)
 {
     uint32_t *ptr = (uint32_t *)&s->csr[addr];
     uint32_t val = (*ptr & ~clear) | mask;
@@ -117,9 +115,8 @@ static inline uint32_t set_mask_long(IntelIOMMUState *s, hwaddr addr,
     return val;
 }
 
-/* val = (val & ~clear) | mask */
-static inline uint64_t set_mask_quad(IntelIOMMUState *s, hwaddr addr,
-                                     uint64_t clear, uint64_t mask)
+static inline uint64_t set_clear_mask_quad(IntelIOMMUState *s, hwaddr addr,
+                                           uint64_t clear, uint64_t mask)
 {
     uint64_t *ptr = (uint64_t *)&s->csr[addr];
     uint64_t val = (*ptr & ~clear) | mask;
@@ -425,7 +422,7 @@ static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
     VTD_DPRINTF("Queued Invalidation Enable %s", (en ? "on" : "off"));
 
     /* Ok - report back to driver */
-    set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_QIES);
+    set_clear_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_QIES);
 }
 
 /* Set Root Table Pointer */
@@ -435,7 +432,7 @@ static void handle_gcmd_srtp(IntelIOMMUState *s)
 
     vtd_root_table_setup(s);
     /* Ok - report back to driver */
-    set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_RTPS);
+    set_clear_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_RTPS);
 }
 
 /* Handle Translation Enable/Disable */
@@ -445,18 +442,18 @@ static void handle_gcmd_te(IntelIOMMUState *s, bool en)
 
     if (en) {
         /* Ok - report back to driver */
-        set_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_TES);
+        set_clear_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_TES);
     } else {
         /* Ok - report back to driver */
-        set_mask_long(s, DMAR_GSTS_REG, VTD_GSTS_TES, 0);
+        set_clear_mask_long(s, DMAR_GSTS_REG, VTD_GSTS_TES, 0);
     }
 }
 
 /* Handle write to Global Command Register */
 static void handle_gcmd_write(IntelIOMMUState *s)
 {
-    uint32_t status = __get_long(s, DMAR_GSTS_REG);
-    uint32_t val = __get_long(s, DMAR_GCMD_REG);
+    uint32_t status = get_long_raw(s, DMAR_GSTS_REG);
+    uint32_t val = get_long_raw(s, DMAR_GCMD_REG);
     uint32_t changed = status ^ val;
 
     VTD_DPRINTF("value 0x%x status 0x%x", val, status);
@@ -478,15 +475,15 @@ static void handle_gcmd_write(IntelIOMMUState *s)
 static void handle_ccmd_write(IntelIOMMUState *s)
 {
     uint64_t ret;
-    uint64_t val = __get_quad(s, DMAR_CCMD_REG);
+    uint64_t val = get_quad_raw(s, DMAR_CCMD_REG);
 
     /* Context-cache invalidation request */
     if (val & VTD_CCMD_ICC) {
         ret = vtd_context_cache_invalidate(s, val);
 
         /* Invalidation completed. Change something to show */
-        set_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_ICC, 0ULL);
-        ret = set_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_CAIG_MASK, ret);
+        set_clear_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_ICC, 0ULL);
+        ret = set_clear_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_CAIG_MASK, ret);
         VTD_DPRINTF("CCMD_REG write-back val: 0x%"PRIx64, ret);
     }
 }
@@ -495,15 +492,16 @@ static void handle_ccmd_write(IntelIOMMUState *s)
 static void handle_iotlb_write(IntelIOMMUState *s)
 {
     uint64_t ret;
-    uint64_t val = __get_quad(s, DMAR_IOTLB_REG);
+    uint64_t val = get_quad_raw(s, DMAR_IOTLB_REG);
 
     /* IOTLB invalidation request */
     if (val & VTD_TLB_IVT) {
         ret = vtd_iotlb_flush(s, val);
 
         /* Invalidation completed. Change something to show */
-        set_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_IVT, 0ULL);
-        ret = set_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_FLUSH_GRANU_MASK_A, ret);
+        set_clear_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_IVT, 0ULL);
+        ret = set_clear_mask_quad(s, DMAR_IOTLB_REG,
+                                  VTD_TLB_FLUSH_GRANU_MASK_A, ret);
         VTD_DPRINTF("IOTLB_REG write-back val: 0x%"PRIx64, ret);
     }
 }
@@ -693,7 +691,7 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
         .perm = IOMMU_NONE,
     };
 
-    if (!(__get_long(s, DMAR_GSTS_REG) & VTD_GSTS_TES)) {
+    if (!(get_long_raw(s, DMAR_GSTS_REG) & VTD_GSTS_TES)) {
         /* DMAR disabled, passthrough, use 4k-page*/
         ret.iova = addr & VTD_PAGE_MASK_4K;
         ret.translated_addr = addr & VTD_PAGE_MASK_4K;
@@ -862,7 +860,7 @@ static void vtd_reset(DeviceState *dev)
     do_vtd_init(s);
 }
 
-/* Initializatoin function of QOM */
+/* Initialization function of QOM */
 static void vtd_realize(DeviceState *dev, Error **errp)
 {
     IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
