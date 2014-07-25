@@ -33,6 +33,15 @@
     do { } while (0)
 #endif
 
+#define SAFE_CHECK_INTEL_IOMMU
+#ifdef SAFE_CHECK_INTEL_IOMMU
+#define VTD_ASSERT(expr) \
+    do { assert(expr); } while (0)
+#else
+#define VTD_ASSERT(expr) \
+    do { } while (0)
+#endif
+
 static inline void define_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val,
                                uint64_t wmask, uint64_t w1cmask)
 {
