@@ -515,8 +515,9 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
     uint64_t val;
 
     if (addr + size > DMAR_REG_SIZE) {
-        VTD_DPRINTF("error: addr outside region: max 0x%x, got 0x%"PRIx64 " %d",
-                    DMAR_REG_SIZE, addr, size);
+        VTD_DPRINTF("error: addr outside region: max 0x%"PRIx64
+                    ", got 0x%"PRIx64 " %d",
+                    (uint64_t)DMAR_REG_SIZE, addr, size);
         return (uint64_t)-1;
     }
 
@@ -555,8 +556,9 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     IntelIOMMUState *s = opaque;
 
     if (addr + size > DMAR_REG_SIZE) {
-        VTD_DPRINTF("error: addr outside region: max 0x%x, got 0x%"PRIx64 " %d",
-                    DMAR_REG_SIZE, addr, size);
+        VTD_DPRINTF("error: addr outside region: max 0x%"PRIx64
+                    ", got 0x%"PRIx64 " %d",
+                    (uint64_t)DMAR_REG_SIZE, addr, size);
         return;
     }
 
