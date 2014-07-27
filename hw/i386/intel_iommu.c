@@ -298,6 +298,38 @@ static uint64_t gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
     return slpte;
 }
 
+/* Map a device to its corresponding domain (context_entry) */
+static inline bool dev_to_context_entry(IntelIOMMUState *s, int bus_num,
+                                        int devfn, VTDContextEntry *ce)
+{
+    VTDRootEntry re;
+
+    assert(0 <= bus_num && bus_num < VTD_PCI_BUS_MAX);
+    assert(0 <= devfn && devfn < VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX);
+
+    if (!get_root_entry(s, bus_num, &re)) {
+        /* FIXME: fault reporting */
+        return false;
+    }
+    if (!root_entry_present(&re)) {
+        /* FIXME: fault reporting */
+        VTD_DPRINTF("error: root-entry #%d is not present", bus_num);
+        return false;
+    }
+    if (!get_context_entry_from_root(&re, devfn, ce)) {
+        /* FIXME: fault reporting */
+        return false;
+    }
+    if (!context_entry_present(ce)) {
+        /* FIXME: fault reporting */
+        VTD_DPRINTF("error: context-entry #%d(bus #%d) is not present", devfn,
+                    bus_num);
+        return false;
+    }
+
+    return true;
+}
+
 /* Do a paging-structures walk to do a iommu translation
  * @bus_num: The bus number
  * @devfn: The devfn, which is the  combined of device and function number
@@ -306,30 +338,12 @@ static uint64_t gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
 static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
                             hwaddr addr, IOMMUTLBEntry *entry)
 {
-    VTDRootEntry re;
     VTDContextEntry ce;
     uint64_t slpte;
     int level;
     uint64_t page_mask = VTD_PAGE_MASK_4K;
 
-
-    if (!get_root_entry(s, bus_num, &re)) {
-        /* FIXME: fault reporting */
-        return;
-    }
-    if (!root_entry_present(&re)) {
-        /* FIXME: fault reporting */
-        VTD_DPRINTF("error: root-entry #%d is not present", bus_num);
-        return;
-    }
-    if (!get_context_entry_from_root(&re, devfn, &ce)) {
-        /* FIXME: fault reporting */
-        return;
-    }
-    if (!context_entry_present(&ce)) {
-        /* FIXME: fault reporting */
-        VTD_DPRINTF("error: context-entry #%d(bus #%d) is not present", devfn,
-                    bus_num);
+    if (!dev_to_context_entry(s, bus_num, devfn, &ce)) {
         return;
     }
 
