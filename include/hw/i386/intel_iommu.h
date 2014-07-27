@@ -151,14 +151,6 @@ struct IntelIOMMUState {
     VTDAddressSpace **address_spaces[VTD_PCI_BUS_MAX];
 };
 
-
-/* An invalidate descriptor */
-typedef struct intel_iommu_inv_desc {
-    uint64_t lower;
-    uint64_t upper;
-} intel_iommu_inv_desc;
-
-
 /* IOTLB_REG */
 #define VTD_TLB_GLOBAL_FLUSH (1ULL << 60) /* Global invalidation */
 #define VTD_TLB_DSI_FLUSH (2ULL << 60)  /* Domain-selective invalidation */
@@ -231,9 +223,9 @@ typedef struct intel_iommu_inv_desc {
 #define VTD_MGAW    39  /* Maximum Guest Address Width */
 #define VTD_CAP_MGAW    (((VTD_MGAW - 1) & 0x3fULL) << 16)
 /* Supported Adjusted Guest Address Widths */
-#define VTD_SAGAW_MASK  (0x1fULL << 8)
-#define VTD_SAGAW_39bit (0x2ULL << 8)   /* 39-bit AGAW, 3-level page-table */
-#define VTD_SAGAW_48bit (0x4ULL << 8)   /* 48-bit AGAW, 4-level page-table */
+#define VTD_CAP_SAGAW_MASK  (0x1fULL << 8)
+#define VTD_CAP_SAGAW_39bit (0x2ULL << 8)  /* 39-bit AGAW, 3-level page-table */
+#define VTD_CAP_SAGAW_48bit (0x4ULL << 8)  /* 48-bit AGAW, 4-level page-table */
 
 
 /* Pagesize of VTD paging structures, including root and context tables */

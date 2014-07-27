@@ -23,22 +23,13 @@
 #include "exec/address-spaces.h"
 #include "hw/i386/intel_iommu.h"
 
-/* #define DEBUG_INTEL_IOMMU */
+/*#define DEBUG_INTEL_IOMMU*/
 #ifdef DEBUG_INTEL_IOMMU
 #define VTD_DPRINTF(fmt, ...) \
     do { fprintf(stderr, "(vtd)%s: " fmt "\n", __func__, \
                  ## __VA_ARGS__); } while (0)
 #else
 #define VTD_DPRINTF(fmt, ...) \
-    do { } while (0)
-#endif
-
-#define SAFE_CHECK_INTEL_IOMMU
-#ifdef SAFE_CHECK_INTEL_IOMMU
-#define VTD_ASSERT(expr) \
-    do { assert(expr); } while (0)
-#else
-#define VTD_ASSERT(expr) \
     do { } while (0)
 #endif
 
@@ -144,7 +135,12 @@ static bool get_root_entry(IntelIOMMUState *s, int index, VTDRootEntry *re)
 
     addr = s->root + index * sizeof(*re);
 
-    assert(!dma_memory_read(&address_space_memory, addr, re, sizeof(*re)));
+    if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
+        /* FIXME: fault reporting */
+        VTD_DPRINTF("error: fail to read root table");
+        re->val = 0;
+        return false;
+    }
 
     re->val = le64_to_cpu(re->val);
     return true;
@@ -170,7 +166,13 @@ static bool get_context_entry_from_root(VTDRootEntry *root, int index,
 
     addr = (root->val & VTD_ROOT_ENTRY_CTP) + index * sizeof(*ce);
 
-    assert(!dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce)));
+    if (dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce))) {
+        /* FIXME: fault reporting */
+        VTD_DPRINTF("error: fail to read context_entry table");
+        ce->lo = 0;
+        ce->hi = 0;
+        return false;
+    }
 
     ce->lo = le64_to_cpu(ce->lo);
     ce->hi = le64_to_cpu(ce->hi);
@@ -231,9 +233,14 @@ static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
 
     assert(index >= 0 && index < VTD_SL_PT_ENTRY_NR);
 
-    assert(!dma_memory_read(&address_space_memory,
-                            base_addr + index * sizeof(slpte), &slpte,
-                            sizeof(slpte)));
+    if (dma_memory_read(&address_space_memory,
+                        base_addr + index * sizeof(slpte), &slpte,
+                        sizeof(slpte))) {
+        /* FIXME: fault reporting */
+        VTD_DPRINTF("error: fail to read second level paging structures");
+        slpte = (uint64_t)-1;
+        return slpte;
+    }
 
     slpte = le64_to_cpu(slpte);
     return slpte;
@@ -270,6 +277,10 @@ static uint64_t gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
         offset = gpa_level_offset(gpa, level);
         slpte = get_slpte(addr, offset);
 
+        if (slpte == (uint64_t)-1) {
+            *slpte_level = level;
+            break;
+        }
         if (!slpte_present(slpte)) {
             VTD_DPRINTF("error: slpte 0x%"PRIx64 " is not present", slpte);
             slpte = (uint64_t)-1;
@@ -302,20 +313,20 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
 
 
     if (!get_root_entry(s, bus_num, &re)) {
-        /* FIXME: basic fault reporting */
+        /* FIXME: fault reporting */
         return;
     }
     if (!root_entry_present(&re)) {
-        /* FIXME */
+        /* FIXME: fault reporting */
         VTD_DPRINTF("error: root-entry #%d is not present", bus_num);
         return;
     }
     if (!get_context_entry_from_root(&re, devfn, &ce)) {
-        /* FIXME */
+        /* FIXME: fault reporting */
         return;
     }
     if (!context_entry_present(&ce)) {
-        /* FIXME */
+        /* FIXME: fault reporting */
         VTD_DPRINTF("error: context-entry #%d(bus #%d) is not present", devfn,
                     bus_num);
         return;
@@ -323,7 +334,7 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
 
     slpte = gpa_to_slpte(&ce, addr, &level);
     if (slpte == (uint64_t)-1) {
-        /* FIXME */
+        /* FIXME: fault reporting */
         VTD_DPRINTF("error: can't get slpte for gpa %"PRIx64, addr);
         return;
     }
@@ -350,7 +361,7 @@ static void vtd_root_table_setup(IntelIOMMUState *s)
     s->extended = s->root & VTD_RTADDR_RTT;
     s->root &= ~0xfff;
     VTD_DPRINTF("root_table addr 0x%"PRIx64 " %s", s->root,
-                (s->extended ? "(Extended)" : ""));
+                (s->extended ? "(extended)" : ""));
 }
 
 /* Context-cache invalidation
@@ -574,25 +585,6 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         handle_gcmd_write(s);
         break;
 
-    /* Invalidation Queue Tail Register, 64-bit */
-    /*case DMAR_IQT_REG:
-        if (size == 4) {
-
-        }
-        if (size == 4) {
-            if (former_size == 0) {
-                former_size = size;
-                former_value = val;
-                goto out;
-            } else {
-                val = (val << 32) + former_value;
-                former_size = 0;
-                former_value = 0;
-            }
-        }
-        handle_iqt_write(s, val);
-        break;*/
-
     /* Context Command Register, 64-bit */
     case DMAR_CCMD_REG:
         VTD_DPRINTF("DMAR_CCMD_REG write addr 0x%"PRIx64
@@ -765,15 +757,15 @@ static void do_vtd_init(IntelIOMMUState *s)
      * b.8:12 = 2: SAGAW(Supported Adjusted Guest Address Widths), 39-bit,
      *             3-level page-table
      * b.16:21 = 38: MGAW(Maximum Guest Address Width) = 39
-     * b.22 = 1: ZLR(Zero Length Read) supports zero length DMA read requests
-     *           to write-only pages
+     * b.22 = 0: ZLR(Zero Length Read) zero length DMA read requests
+     *           to write-only pages not supported
      * b.24:33 = 34: FRO(Fault-recording Register offset)
      * b.54 = 0: DWD(Write Draining), draining of write requests not supported
      * b.55 = 0: DRD(Read Draining), draining of read requests not supported
      */
-    const uint64_t dmar_cap_reg_value = 0x00400000ULL | VTD_CAP_FRO |
-                                        VTD_CAP_NFR | VTD_CAP_ND |
-                                        VTD_CAP_MGAW | VTD_SAGAW_39bit;
+    const uint64_t dmar_cap_reg_value = VTD_CAP_FRO | VTD_CAP_NFR |
+                                        VTD_CAP_ND | VTD_CAP_MGAW |
+                                        VTD_CAP_SAGAW_39bit;
 
     /* b.1 = 0: QI(Queued Invalidation support) not supported
      * b.2 = 0: DT(Device-TLB support)
