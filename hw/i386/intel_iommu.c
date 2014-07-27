@@ -21,7 +21,8 @@
 
 #include "hw/sysbus.h"
 #include "exec/address-spaces.h"
-#include "hw/i386/intel_iommu.h"
+#include "intel_iommu_internal.h"
+
 
 /*#define DEBUG_INTEL_IOMMU*/
 #ifdef DEBUG_INTEL_IOMMU
