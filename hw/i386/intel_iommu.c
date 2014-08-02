@@ -26,12 +26,19 @@
 
 /*#define DEBUG_INTEL_IOMMU*/
 #ifdef DEBUG_INTEL_IOMMU
-#define VTD_DPRINTF(fmt, ...) \
-    do { fprintf(stderr, "(vtd)%s: " fmt "\n", __func__, \
-                 ## __VA_ARGS__); } while (0)
+enum {
+    DEBUG_GENERAL, DEBUG_CSR, DEBUG_MMU,
+};
+#define VTD_DBGBIT(x)   (1 << DEBUG_##x)
+static int vtd_dbgflags = VTD_DBGBIT(GENERAL) | VTD_DBGBIT(CSR);
+
+#define VTD_DPRINTF(what, fmt, ...) do { \
+    if (vtd_dbgflags & VTD_DBGBIT(what)) { \
+        fprintf(stderr, "(vtd)%s: " fmt "\n", __func__, \
+                ## __VA_ARGS__); } \
+    } while (0)
 #else
-#define VTD_DPRINTF(fmt, ...) \
-    do { } while (0)
+#define VTD_DPRINTF(what, fmt, ...) do {} while (0)
 #endif
 
 static inline void define_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val,
@@ -138,7 +145,7 @@ static bool get_root_entry(IntelIOMMUState *s, int index, VTDRootEntry *re)
 
     if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
         /* FIXME: fault reporting */
-        VTD_DPRINTF("error: fail to read root table");
+        VTD_DPRINTF(GENERAL, "error: fail to read root table");
         re->val = 0;
         return false;
     }
@@ -169,7 +176,7 @@ static bool get_context_entry_from_root(VTDRootEntry *root, int index,
 
     if (dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce))) {
         /* FIXME: fault reporting */
-        VTD_DPRINTF("error: fail to read context_entry table");
+        VTD_DPRINTF(GENERAL, "error: fail to read context_entry table");
         ce->lo = 0;
         ce->hi = 0;
         return false;
@@ -238,7 +245,8 @@ static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
                         base_addr + index * sizeof(slpte), &slpte,
                         sizeof(slpte))) {
         /* FIXME: fault reporting */
-        VTD_DPRINTF("error: fail to read second level paging structures");
+        VTD_DPRINTF(GENERAL,
+                    "error: fail to read second level paging structures");
         slpte = (uint64_t)-1;
         return slpte;
     }
@@ -283,7 +291,8 @@ static uint64_t gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
             break;
         }
         if (!slpte_present(slpte)) {
-            VTD_DPRINTF("error: slpte 0x%"PRIx64 " is not present", slpte);
+            VTD_DPRINTF(GENERAL,
+                        "error: slpte 0x%"PRIx64 " is not present", slpte);
             slpte = (uint64_t)-1;
             *slpte_level = level;
             break;
@@ -313,7 +322,7 @@ static inline bool dev_to_context_entry(IntelIOMMUState *s, int bus_num,
     }
     if (!root_entry_present(&re)) {
         /* FIXME: fault reporting */
-        VTD_DPRINTF("error: root-entry #%d is not present", bus_num);
+        VTD_DPRINTF(GENERAL, "error: root-entry #%d is not present", bus_num);
         return false;
     }
     if (!get_context_entry_from_root(&re, devfn, ce)) {
@@ -322,7 +331,8 @@ static inline bool dev_to_context_entry(IntelIOMMUState *s, int bus_num,
     }
     if (!context_entry_present(ce)) {
         /* FIXME: fault reporting */
-        VTD_DPRINTF("error: context-entry #%d(bus #%d) is not present", devfn,
+        VTD_DPRINTF(GENERAL,
+                    "error: context-entry #%d(bus #%d) is not present", devfn,
                     bus_num);
         return false;
     }
@@ -350,7 +360,7 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
     slpte = gpa_to_slpte(&ce, addr, &level);
     if (slpte == (uint64_t)-1) {
         /* FIXME: fault reporting */
-        VTD_DPRINTF("error: can't get slpte for gpa %"PRIx64, addr);
+        VTD_DPRINTF(GENERAL, "error: can't get slpte for gpa %"PRIx64, addr);
         return;
     }
 
@@ -375,7 +385,7 @@ static void vtd_root_table_setup(IntelIOMMUState *s)
     s->root = *((uint64_t *)&s->csr[DMAR_RTADDR_REG]);
     s->extended = s->root & VTD_RTADDR_RTT;
     s->root &= ~0xfff;
-    VTD_DPRINTF("root_table addr 0x%"PRIx64 " %s", s->root,
+    VTD_DPRINTF(CSR, "root_table addr 0x%"PRIx64 " %s", s->root,
                 (s->extended ? "(extended)" : ""));
 }
 
@@ -390,22 +400,23 @@ static uint64_t vtd_context_cache_invalidate(IntelIOMMUState *s, uint64_t val)
 
     switch (type) {
     case VTD_CCMD_GLOBAL_INVL:
-        VTD_DPRINTF("Global invalidation request");
+        VTD_DPRINTF(CSR, "Global invalidation request");
         caig = VTD_CCMD_GLOBAL_INVL_A;
         break;
 
     case VTD_CCMD_DOMAIN_INVL:
-        VTD_DPRINTF("Domain-selective invalidation request");
+        VTD_DPRINTF(CSR, "Domain-selective invalidation request");
         caig = VTD_CCMD_DOMAIN_INVL_A;
         break;
 
     case VTD_CCMD_DEVICE_INVL:
-        VTD_DPRINTF("Domain-selective invalidation request");
+        VTD_DPRINTF(CSR, "Domain-selective invalidation request");
         caig = VTD_CCMD_DEVICE_INVL_A;
         break;
 
     default:
-        VTD_DPRINTF("error: wrong context-cache invalidation granularity");
+        VTD_DPRINTF(GENERAL,
+                    "error: wrong context-cache invalidation granularity");
         caig = 0;
     }
 
@@ -423,22 +434,22 @@ static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
 
     switch (type) {
     case VTD_TLB_GLOBAL_FLUSH:
-        VTD_DPRINTF("Global IOTLB flush");
+        VTD_DPRINTF(CSR, "Global IOTLB flush");
         iaig = VTD_TLB_GLOBAL_FLUSH_A;
         break;
 
     case VTD_TLB_DSI_FLUSH:
-        VTD_DPRINTF("Domain-selective IOTLB flush");
+        VTD_DPRINTF(CSR, "Domain-selective IOTLB flush");
         iaig = VTD_TLB_DSI_FLUSH_A;
         break;
 
     case VTD_TLB_PSI_FLUSH:
-        VTD_DPRINTF("Page-selective-within-domain IOTLB flush");
+        VTD_DPRINTF(CSR, "Page-selective-within-domain IOTLB flush");
         iaig = VTD_TLB_PSI_FLUSH_A;
         break;
 
     default:
-        VTD_DPRINTF("error: wrong iotlb flush granularity");
+        VTD_DPRINTF(GENERAL, "error: wrong iotlb flush granularity");
         iaig = 0;
     }
 
@@ -448,7 +459,7 @@ static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
 /* FIXME: Not implemented yet */
 static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
 {
-    VTD_DPRINTF("Queued Invalidation Enable %s", (en ? "on" : "off"));
+    VTD_DPRINTF(CSR, "Queued Invalidation Enable %s", (en ? "on" : "off"));
 
     /* Ok - report back to driver */
     set_clear_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_QIES);
@@ -457,7 +468,7 @@ static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
 /* Set Root Table Pointer */
 static void handle_gcmd_srtp(IntelIOMMUState *s)
 {
-    VTD_DPRINTF("set Root Table Pointer");
+    VTD_DPRINTF(CSR, "set Root Table Pointer");
 
     vtd_root_table_setup(s);
     /* Ok - report back to driver */
@@ -467,7 +478,7 @@ static void handle_gcmd_srtp(IntelIOMMUState *s)
 /* Handle Translation Enable/Disable */
 static void handle_gcmd_te(IntelIOMMUState *s, bool en)
 {
-    VTD_DPRINTF("Translation Enable %s", (en ? "on" : "off"));
+    VTD_DPRINTF(CSR, "Translation Enable %s", (en ? "on" : "off"));
 
     if (en) {
         /* Ok - report back to driver */
@@ -485,7 +496,7 @@ static void handle_gcmd_write(IntelIOMMUState *s)
     uint32_t val = get_long_raw(s, DMAR_GCMD_REG);
     uint32_t changed = status ^ val;
 
-    VTD_DPRINTF("value 0x%x status 0x%x", val, status);
+    VTD_DPRINTF(CSR, "value 0x%x status 0x%x", val, status);
     if (changed & VTD_GCMD_TE) {
         /* Translation enable/disable */
         handle_gcmd_te(s, val & VTD_GCMD_TE);
@@ -496,7 +507,7 @@ static void handle_gcmd_write(IntelIOMMUState *s)
         /* Queued Invalidation Enable */
         handle_gcmd_qie(s, val & VTD_GCMD_QIE);
     } else {
-        VTD_DPRINTF("error: unhandled gcmd write");
+        VTD_DPRINTF(GENERAL, "error: unhandled gcmd write");
     }
 }
 
@@ -513,7 +524,7 @@ static void handle_ccmd_write(IntelIOMMUState *s)
         /* Invalidation completed. Change something to show */
         set_clear_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_ICC, 0ULL);
         ret = set_clear_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_CAIG_MASK, ret);
-        VTD_DPRINTF("CCMD_REG write-back val: 0x%"PRIx64, ret);
+        VTD_DPRINTF(CSR, "CCMD_REG write-back val: 0x%"PRIx64, ret);
     }
 }
 
@@ -531,7 +542,7 @@ static void handle_iotlb_write(IntelIOMMUState *s)
         set_clear_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_IVT, 0ULL);
         ret = set_clear_mask_quad(s, DMAR_IOTLB_REG,
                                   VTD_TLB_FLUSH_GRANU_MASK_A, ret);
-        VTD_DPRINTF("IOTLB_REG write-back val: 0x%"PRIx64, ret);
+        VTD_DPRINTF(CSR, "IOTLB_REG write-back val: 0x%"PRIx64, ret);
     }
 }
 
@@ -541,7 +552,7 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
     uint64_t val;
 
     if (addr + size > DMAR_REG_SIZE) {
-        VTD_DPRINTF("error: addr outside region: max 0x%"PRIx64
+        VTD_DPRINTF(GENERAL, "error: addr outside region: max 0x%"PRIx64
                     ", got 0x%"PRIx64 " %d",
                     (uint64_t)DMAR_REG_SIZE, addr, size);
         return (uint64_t)-1;
@@ -572,7 +583,8 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
         }
     }
 
-    VTD_DPRINTF("addr 0x%"PRIx64 " size %d val 0x%"PRIx64, addr, size, val);
+    VTD_DPRINTF(CSR, "addr 0x%"PRIx64 " size %d val 0x%"PRIx64,
+                addr, size, val);
     return val;
 }
 
@@ -582,7 +594,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     IntelIOMMUState *s = opaque;
 
     if (addr + size > DMAR_REG_SIZE) {
-        VTD_DPRINTF("error: addr outside region: max 0x%"PRIx64
+        VTD_DPRINTF(GENERAL, "error: addr outside region: max 0x%"PRIx64
                     ", got 0x%"PRIx64 " %d",
                     (uint64_t)DMAR_REG_SIZE, addr, size);
         return;
@@ -594,7 +606,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     switch (addr) {
     /* Global Command Register, 32-bit */
     case DMAR_GCMD_REG:
-        VTD_DPRINTF("DMAR_GCMD_REG write addr 0x%"PRIx64
+        VTD_DPRINTF(CSR, "DMAR_GCMD_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         set_long(s, addr, val);
         handle_gcmd_write(s);
@@ -602,7 +614,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Context Command Register, 64-bit */
     case DMAR_CCMD_REG:
-        VTD_DPRINTF("DMAR_CCMD_REG write addr 0x%"PRIx64
+        VTD_DPRINTF(CSR, "DMAR_CCMD_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
@@ -613,7 +625,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_CCMD_REG_HI:
-        VTD_DPRINTF("DMAR_CCMD_REG_HI write addr 0x%"PRIx64
+        VTD_DPRINTF(CSR, "DMAR_CCMD_REG_HI write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         assert(size == 4);
         set_long(s, addr, val);
@@ -623,7 +635,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* IOTLB Invalidation Register, 64-bit */
     case DMAR_IOTLB_REG:
-        VTD_DPRINTF("DMAR_IOTLB_REG write addr 0x%"PRIx64
+        VTD_DPRINTF(CSR, "DMAR_IOTLB_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
@@ -634,7 +646,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_IOTLB_REG_HI:
-        VTD_DPRINTF("DMAR_IOTLB_REG_HI write addr 0x%"PRIx64
+        VTD_DPRINTF(CSR, "DMAR_IOTLB_REG_HI write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         assert(size == 4);
         set_long(s, addr, val);
@@ -653,7 +665,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_FECTL_REG:
     /* Protected Memory Enable Register, 32-bit */
     case DMAR_PMEN_REG:
-        VTD_DPRINTF("known reg write addr 0x%"PRIx64
+        VTD_DPRINTF(CSR, "known reg write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         set_long(s, addr, val);
         break;
@@ -661,7 +673,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Root Table Address Register, 64-bit */
     case DMAR_RTADDR_REG:
-        VTD_DPRINTF("DMAR_RTADDR_REG write addr 0x%"PRIx64
+        VTD_DPRINTF(CSR, "DMAR_RTADDR_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
@@ -671,14 +683,14 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_RTADDR_REG_HI:
-        VTD_DPRINTF("DMAR_RTADDR_REG_HI write addr 0x%"PRIx64
+        VTD_DPRINTF(CSR, "DMAR_RTADDR_REG_HI write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         assert(size == 4);
         set_long(s, addr, val);
         break;
 
     default:
-        VTD_DPRINTF("error: unhandled reg write addr 0x%"PRIx64
+        VTD_DPRINTF(GENERAL, "error: unhandled reg write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
@@ -714,7 +726,8 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
 
     iommu_translate(s, bus_num, devfn, addr, &ret);
 
-    VTD_DPRINTF("bus %d slot %d func %d devfn %d gpa %"PRIx64 " hpa %"PRIx64,
+    VTD_DPRINTF(MMU,
+                "bus %d slot %d func %d devfn %d gpa %"PRIx64 " hpa %"PRIx64,
                 bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
                 ret.translated_addr);
     return ret;
@@ -868,7 +881,7 @@ static void vtd_reset(DeviceState *dev)
 {
     IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
 
-    VTD_DPRINTF("");
+    VTD_DPRINTF(GENERAL, "");
     do_vtd_init(s);
 }
 
@@ -877,7 +890,7 @@ static void vtd_realize(DeviceState *dev, Error **errp)
 {
     IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
 
-    VTD_DPRINTF("");
+    VTD_DPRINTF(GENERAL, "");
     memset(s->address_spaces, 0, sizeof(s->address_spaces));
     memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
                           "intel_iommu", DMAR_REG_SIZE);
@@ -904,7 +917,7 @@ static const TypeInfo vtd_info = {
 
 static void vtd_register_types(void)
 {
-    VTD_DPRINTF("");
+    VTD_DPRINTF(GENERAL, "");
     type_register_static(&vtd_info);
 }
 
