@@ -894,7 +894,7 @@ static void vtd_realize(DeviceState *dev, Error **errp)
     memset(s->address_spaces, 0, sizeof(s->address_spaces));
     memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
                           "intel_iommu", DMAR_REG_SIZE);
-
+    sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->csrmem);
     do_vtd_init(s);
 }
 
