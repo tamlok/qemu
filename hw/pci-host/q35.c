@@ -394,10 +394,8 @@ static void mch_init_dmar(MCHPCIState *mch)
         error_free(error);
         return;
     }
+    sysbus_mmio_map(SYS_BUS_DEVICE(mch->iommu), 0, Q35_HOST_BRIDGE_IOMMU_ADDR);
 
-    memory_region_add_subregion(mch->pci_address_space,
-                                Q35_HOST_BRIDGE_IOMMU_ADDR,
-                                &mch->iommu->csrmem);
     pci_setup_iommu(pci_bus, q35_host_dma_iommu, mch->iommu);
 }
 
