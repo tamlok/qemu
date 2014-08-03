@@ -168,7 +168,8 @@
 #define VTD_RTADDR_ADDR_MASK (((1ULL << VTD_HOST_ADDRESS_WIDTH) - 1) ^ 0xfffULL)
 
 /* ECAP_REG */
-#define VTD_ECAP_IRO (DMAR_IOTLB_REG_OFFSET << 4)   /* (val >> 4) << 8 */
+#define VTD_ECAP_IRO (DMAR_IOTLB_REG_OFFSET << 4)  /* (val >> 4) << 8 */
+#define VTD_ECAP_QI  (1ULL << 1)
 
 /* CAP_REG */
 /* (val >> 4) << 24 */
@@ -184,6 +185,36 @@
 #define VTD_CAP_SAGAW_39bit (0x2ULL << 8)  /* 39-bit AGAW, 3-level page-table */
 #define VTD_CAP_SAGAW_48bit (0x4ULL << 8)  /* 48-bit AGAW, 4-level page-table */
 
+/* IQT_REG */
+#define VTD_IQT_QT(val)     (((val) >> 4) & 0x7fffULL)
+
+/* IQA_REG */
+#define VTD_IQA_IQA_MASK    (((1ULL << VTD_HOST_ADDRESS_WIDTH) - 1) ^ 0xfffULL)
+#define VTD_IQA_QS          (0x7ULL)
+
+/* IQH_REG */
+#define VTD_IQH_QH_SHIFT    (4)
+#define VTD_IQH_QH_MASK     (0x7fff0ULL)
+
+/* Queued Invalidation Descriptor */
+struct VTDInvDesc {
+    uint64_t lo;
+    uint64_t hi;
+};
+typedef struct VTDInvDesc VTDInvDesc;
+
+/* Masks for struct VTDInvDesc */
+#define VTD_INV_DESC_TYPE  (0xf)
+#define VTD_INV_DESC_CC    (0x1) /* Context-cache Invalidate Descriptor */
+#define VTD_INV_DESC_IOTLB (0x2)
+#define VTD_INV_DESC_WAIT  (0x5) /* Invalidation Wait Descriptor */
+#define VTD_INV_DESC_NONE  (0)   /* Not an Invalidate Descriptor */
+
+/* Masks for Invalidation Wait Descriptor*/
+#define VTD_INV_DESC_WAIT_SW    (1ULL << 5)
+#define VTD_INV_DESC_WAIT_IF    (1ULL << 4)
+#define VTD_INV_DESC_WAIT_FN    (1ULL << 6)
+#define VTD_INV_DESC_WAIT_DATA_SHIFT (32)
 
 /* Pagesize of VTD paging structures, including root and context tables */
 #define VTD_PAGE_SHIFT      (12)

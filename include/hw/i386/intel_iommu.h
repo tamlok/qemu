@@ -64,12 +64,13 @@ struct IntelIOMMUState {
     uint32_t version;
 
     dma_addr_t root;  /* Current root table pointer */
-    bool extended;    /* Type of root table (extended or not) */
+    bool root_extended;    /* Type of root table (extended or not) */
     uint16_t iq_head; /* Current invalidation queue head */
     uint16_t iq_tail; /* Current invalidation queue tail */
     dma_addr_t iq;   /* Current invalidation queue (IQ) pointer */
-    size_t iq_sz;    /* IQ Size in number of entries */
-    bool iq_enable;  /* Set if the IQ is enabled */
+    uint16_t iq_size;    /* IQ Size in number of entries */
+    bool qi_enabled;  /* Set if the QI is enabled */
+    uint8_t iq_last_desc_type; /* The type of last completed descriptor */
 
     MemoryRegionIOMMUOps iommu_ops;
     VTDAddressSpace **address_spaces[VTD_PCI_BUS_MAX];
