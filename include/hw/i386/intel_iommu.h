@@ -39,6 +39,9 @@
 
 #define DMAR_REG_SIZE   0x2a0
 
+/* FIXME: do not know how to decide the haw */
+#define VTD_HOST_ADDRESS_WIDTH  39
+
 typedef struct IntelIOMMUState IntelIOMMUState;
 typedef struct VTDAddressSpace VTDAddressSpace;
 
