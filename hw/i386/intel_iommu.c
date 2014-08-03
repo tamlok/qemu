@@ -382,9 +382,10 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
 
 static void vtd_root_table_setup(IntelIOMMUState *s)
 {
-    s->root = *((uint64_t *)&s->csr[DMAR_RTADDR_REG]);
+    s->root = get_quad_raw(s, DMAR_RTADDR_REG);
     s->extended = s->root & VTD_RTADDR_RTT;
-    s->root &= ~0xfff;
+    s->root &= VTD_RTADDR_ADDR_MASK;
+
     VTD_DPRINTF(CSR, "root_table addr 0x%"PRIx64 " %s", s->root,
                 (s->extended ? "(extended)" : ""));
 }

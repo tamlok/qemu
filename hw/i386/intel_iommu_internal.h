@@ -165,6 +165,7 @@
 
 /* RTADDR_REG */
 #define VTD_RTADDR_RTT (1ULL << 11)
+#define VTD_RTADDR_ADDR_MASK (((1ULL << VTD_HOST_ADDRESS_WIDTH) - 1) ^ 0xfffULL)
 
 /* ECAP_REG */
 #define VTD_ECAP_IRO (DMAR_IOTLB_REG_OFFSET << 4)   /* (val >> 4) << 8 */
