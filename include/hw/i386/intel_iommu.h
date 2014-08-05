@@ -63,13 +63,14 @@ struct IntelIOMMUState {
     uint8_t womask[DMAR_REG_SIZE]; /* WO (write only - read returns 0) */
     uint32_t version;
 
-    dma_addr_t root;  /* Current root table pointer */
-    bool root_extended;    /* Type of root table (extended or not) */
-    uint16_t iq_head; /* Current invalidation queue head */
-    uint16_t iq_tail; /* Current invalidation queue tail */
-    dma_addr_t iq;   /* Current invalidation queue (IQ) pointer */
-    uint16_t iq_size;    /* IQ Size in number of entries */
-    bool qi_enabled;  /* Set if the QI is enabled */
+    dma_addr_t root;        /* Current root table pointer */
+    bool root_extended;     /* Type of root table (extended or not) */
+    bool dmar_enabled;      /* Set if DMA remapping is enabled */
+    uint16_t iq_head;       /* Current invalidation queue head */
+    uint16_t iq_tail;       /* Current invalidation queue tail */
+    dma_addr_t iq;          /* Current invalidation queue (IQ) pointer */
+    uint16_t iq_size;       /* IQ Size in number of entries */
+    bool qi_enabled;        /* Set if the QI is enabled */
     uint8_t iq_last_desc_type; /* The type of last completed descriptor */
 
     MemoryRegionIOMMUOps iommu_ops;

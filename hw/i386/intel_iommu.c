@@ -526,9 +526,11 @@ static void handle_gcmd_te(IntelIOMMUState *s, bool en)
     VTD_DPRINTF(CSR, "Translation Enable %s", (en ? "on" : "off"));
 
     if (en) {
+        s->dmar_enabled = true;
         /* Ok - report back to driver */
         set_clear_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_TES);
     } else {
+        s->dmar_enabled = false;
         /* Ok - report back to driver */
         set_clear_mask_long(s, DMAR_GSTS_REG, VTD_GSTS_TES, 0);
     }
@@ -914,7 +916,7 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
         .perm = IOMMU_NONE,
     };
 
-    if (!(get_long_raw(s, DMAR_GSTS_REG) & VTD_GSTS_TES)) {
+    if (!s->dmar_enabled) {
         /* DMAR disabled, passthrough, use 4k-page*/
         ret.iova = addr & VTD_PAGE_MASK_4K;
         ret.translated_addr = addr & VTD_PAGE_MASK_4K;
@@ -975,6 +977,7 @@ static void do_vtd_init(IntelIOMMUState *s)
     s->iommu_ops.translate = vtd_iommu_translate;
     s->root = 0;
     s->root_extended = false;
+    s->dmar_enabled = false;
     s->iq_head = 0;
     s->iq_tail = 0;
     s->iq = 0;
