@@ -104,8 +104,13 @@
 
 /* If you change the DMAR_FRCD_REG_NR, please remember to change the
  * DMAR_REG_SIZE in include/hw/i386/intel_iommu.h.
- * #define DMAR_REG_SIZE   (DMAR_FRCD_REG_OFFSET + 128 * DMAR_FRCD_REG_NR)
+ * #define DMAR_REG_SIZE   (DMAR_FRCD_REG_OFFSET + 16 * DMAR_FRCD_REG_NR)
  */
+
+#define DMAR_FRCD_REG_0_0    0x220 /* The 0th Fault Recording Register */
+#define DMAR_FRCD_REG_0_1    0x224
+#define DMAR_FRCD_REG_0_2    0x228
+#define DMAR_FRCD_REG_0_3    0x22c
 
 /* IOTLB_REG */
 #define VTD_TLB_GLOBAL_FLUSH (1ULL << 60) /* Global invalidation */
@@ -196,6 +201,66 @@
 #define VTD_IQH_QH_SHIFT    (4)
 #define VTD_IQH_QH_MASK     (0x7fff0ULL)
 
+/* FSTS_REG */
+#define VTD_FSTS_FRI_MASK  (0xff00)
+#define VTD_FSTS_FRI(val)  ((((uint32_t)(val)) << 8) & VTD_FSTS_FRI_MASK)
+#define VTD_FSTS_IQE       (1UL << 4)
+#define VTD_FSTS_PPF       (1UL << 1)
+#define VTD_FSTS_PFO       (1UL)
+
+/* FECTL_REG */
+#define VTD_FECTL_IM       (1UL << 31)
+#define VTD_FECTL_IP       (1UL << 30)
+
+/* Fault Recording Register */
+/* For the high 64-bit of 128-bit */
+#define VTD_FRCD_F         (1ULL << 63)
+#define VTD_FRCD_T         (1ULL << 62)
+#define VTD_FRCD_FR(val)   (((val) & 0xffULL) << 32)
+#define VTD_FRCD_SID_MASK   0xffffULL
+#define VTD_FRCD_SID(val)  ((val) & VTD_FRCD_SID_MASK)
+/* For the low 64-bit of 128-bit */
+#define VTD_FRCD_FI(val)   ((val) & (((1ULL << VTD_MGAW) - 1) ^ 0xfffULL))
+
+/* DMA Remapping Fault Conditions */
+typedef enum VTDFaultReason {
+    /* Reserved for Advanced Fault logging. We use this to represent the case
+     * with no fault event.
+     */
+    VTD_FR_RESERVED = 0,
+    VTD_FR_ROOT_ENTRY_P = 1, /* The Present(P) field of root-entry is 0 */
+    VTD_FR_CONTEXT_ENTRY_P, /* The Present(P) field of context-entry is 0 */
+    VTD_FR_CONTEXT_ENTRY_INV, /* Invalid programming of a context-entry */
+    VTD_FR_ADDR_BEYOND_MGAW, /* Input-address above (2^x-1) */
+    VTD_FR_WRITE, /* No write permission */
+    VTD_FR_READ, /* No read permission */
+    /* Fail to access a second-level paging entry (not SL_PML4E) */
+    VTD_FR_PAGING_ENTRY_INV,
+    VTD_FR_ROOT_TABLE_INV, /* Fail to access a root-entry */
+    VTD_FR_CONTEXT_TABLE_INV, /* Fail to access a context-entry */
+    /* Non-zero reserved field in a present root-entry */
+    VTD_FR_ROOT_ENTRY_RSVD,
+    /* Non-zero reserved field in a present context-entry */
+    VTD_FR_CONTEXT_ENTRY_RSVD,
+    /* Non-zero reserved field in a second-level paging entry with at lease one
+     * Read(R) and Write(W) or Execute(E) field is Set.
+     */
+    VTD_FR_PAGING_ENTRY_RSVD,
+    /* Translation request or translated request explicitly blocked dut to the
+     * programming of the Translation Type (T) field in the present
+     * context-entry.
+     */
+    VTD_FR_CONTEXT_ENTRY_TT,
+    /* This is not a normal fault reason. We use this to indicate some faults
+     * that are not referenced by the VT-d specification.
+     * Fault event with such reason should not be recorded.
+     */
+    VTD_FR_RESERVED_ERR,
+    /* Guard */
+    VTD_FR_MAX,
+} VTDFaultReason;
+
+
 /* Queued Invalidation Descriptor */
 struct VTDInvDesc {
     uint64_t lo;
@@ -215,6 +280,7 @@ typedef struct VTDInvDesc VTDInvDesc;
 #define VTD_INV_DESC_WAIT_IF    (1ULL << 4)
 #define VTD_INV_DESC_WAIT_FN    (1ULL << 6)
 #define VTD_INV_DESC_WAIT_DATA_SHIFT (32)
+
 
 /* Pagesize of VTD paging structures, including root and context tables */
 #define VTD_PAGE_SHIFT      (12)

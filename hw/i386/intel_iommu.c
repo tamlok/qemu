@@ -27,10 +27,11 @@
 /*#define DEBUG_INTEL_IOMMU*/
 #ifdef DEBUG_INTEL_IOMMU
 enum {
-    DEBUG_GENERAL, DEBUG_CSR, DEBUG_MMU,
+    DEBUG_GENERAL, DEBUG_CSR, DEBUG_INV, DEBUG_MMU, DEBUG_FLOG,
 };
 #define VTD_DBGBIT(x)   (1 << DEBUG_##x)
-static int vtd_dbgflags = VTD_DBGBIT(GENERAL) | VTD_DBGBIT(CSR);
+static int vtd_dbgflags = VTD_DBGBIT(GENERAL) | VTD_DBGBIT(CSR) |
+                          VTD_DBGBIT(FLOG);
 
 #define VTD_DPRINTF(what, fmt, ...) do { \
     if (vtd_dbgflags & VTD_DBGBIT(what)) { \
@@ -135,12 +136,205 @@ static inline uint64_t set_clear_mask_quad(IntelIOMMUState *s, hwaddr addr,
     return new_val;
 }
 
+/* Generate an interrupt via MSI */
+static void vtd_generate_interrupt(IntelIOMMUState *s)
+{
+    dma_addr_t addr = get_long_raw(s, DMAR_FEADDR_REG);
+    uint32_t data = get_long_raw(s, DMAR_FEDATA_REG);
+
+    VTD_DPRINTF(FLOG, "msi: addr 0x%"PRIx64 " data 0x%"PRIx32, addr, data);
+    data = cpu_to_le32(data);
+    if (dma_memory_write(&address_space_memory, addr, &data, sizeof(data))) {
+        VTD_DPRINTF(GENERAL, "error: fail to generate msi: addr 0x%"PRIx64
+                    "data 0x%"PRIx32, addr, le32_to_cpu(data));
+    }
+}
+
+/* Generate a fault event to software via MSI if conditions are met.
+ * Notice that the value of FSTS_REG being passed to it should be the one
+ * before update.
+ */
+static void vtd_generate_fault_event(IntelIOMMUState *s, uint32_t ori_fsts)
+{
+    /* Check if there are any previously reported interrupt conditions */
+    if (ori_fsts & VTD_FSTS_PPF || ori_fsts & VTD_FSTS_PFO ||
+        ori_fsts & VTD_FSTS_IQE) {
+        VTD_DPRINTF(FLOG, "there are previous interrupt conditions "
+                    "to be serviced by software, fault event is not generated "
+                    "(FSTS_REG 0x%"PRIx32 ")", ori_fsts);
+        return;
+    }
+    set_clear_mask_long(s, DMAR_FECTL_REG, 0, VTD_FECTL_IP);
+    if (get_long_raw(s, DMAR_FECTL_REG) & VTD_FECTL_IM) {
+        /* Interrupt Mask */
+        VTD_DPRINTF(FLOG, "Interrupt Mask set, fault event is not generated");
+    } else {
+        /* generate interrupt */
+        vtd_generate_interrupt(s);
+        set_clear_mask_long(s, DMAR_FECTL_REG, VTD_FECTL_IP, 0);
+    }
+}
+
+/* Check if the Fault (F) field of the Fault Recording Register referenced by
+ * @index is Set.
+ */
+static inline bool is_frcd_set(IntelIOMMUState *s, uint16_t index)
+{
+    /* Each reg is 128-bit */
+    hwaddr addr = DMAR_FRCD_REG_OFFSET + (((uint64_t)index) << 4);
+    addr += 8; /* Access the high 64-bit half */
+
+    assert(index < DMAR_FRCD_REG_NR);
+
+    return get_quad_raw(s, addr) & VTD_FRCD_F;
+}
+
+/* Update the PPF field of Fault Status Register.
+ * Should be called whenever change the F field of any fault recording
+ * registers.
+ */
+static inline void update_fsts_ppf(IntelIOMMUState *s)
+{
+    int i;
+    uint32_t ppf_mask = 0;
+
+    for (i = 0; i < DMAR_FRCD_REG_NR; i++) {
+        if (is_frcd_set(s, i)) {
+            ppf_mask = VTD_FSTS_PPF;
+            break;
+        }
+    }
+    set_clear_mask_long(s, DMAR_FSTS_REG, VTD_FSTS_PPF, ppf_mask);
+    VTD_DPRINTF(FLOG, "set PPF of FSTS_REG to %d", ppf_mask ? 1 : 0);
+}
+
+static inline void frcd_set_f(IntelIOMMUState *s, uint16_t index)
+{
+    /* Each reg is 128-bit */
+    hwaddr addr = DMAR_FRCD_REG_OFFSET + (((uint64_t)index) << 4);
+    addr += 8; /* Access the high 64-bit half */
+
+    assert(index < DMAR_FRCD_REG_NR);
+
+    set_clear_mask_quad(s, addr, 0, VTD_FRCD_F);
+    update_fsts_ppf(s);
+}
+
+/* Must not update F field now, should be done later */
+static void record_frcd(IntelIOMMUState *s, uint16_t index,
+                             uint16_t source_id, hwaddr addr,
+                             VTDFaultReason fault, bool is_write)
+{
+    uint64_t hi = 0, lo;
+    hwaddr frcd_reg_addr = DMAR_FRCD_REG_OFFSET + (((uint64_t)index) << 4);
+
+    assert(index < DMAR_FRCD_REG_NR);
+
+    lo = VTD_FRCD_FI(addr);
+    hi = VTD_FRCD_SID(source_id) | VTD_FRCD_FR(fault);
+    if (!is_write) {
+        hi |= VTD_FRCD_T;
+    }
+
+    set_quad_raw(s, frcd_reg_addr, lo);
+    set_quad_raw(s, frcd_reg_addr + 8, hi);
+    VTD_DPRINTF(FLOG, "record to FRCD_REG #%u: hi 0x%"PRIx64 ", lo 0x%"PRIx64,
+                index, hi, lo);
+}
+
+/* Try to collapse multiple pending faults from the same requester */
+static inline bool try_collapse_fault(IntelIOMMUState *s, uint16_t source_id)
+{
+    int i;
+    uint64_t frcd_reg;
+    hwaddr addr = DMAR_FRCD_REG_OFFSET + 8; /* The high 64-bit half */
+
+    for (i = 0; i < DMAR_FRCD_REG_NR; i++) {
+        frcd_reg = get_quad_raw(s, addr);
+        VTD_DPRINTF(FLOG, "frcd_reg #%d 0x%"PRIx64, i, frcd_reg);
+        if ((frcd_reg & VTD_FRCD_F) &&
+            ((frcd_reg & VTD_FRCD_SID_MASK) == source_id)) {
+            return true;
+        }
+        addr += 16; /* 128-bit for each */
+    }
+
+    return false;
+}
+
+/* Log and report an DMAR (address translation) fault to software */
+static void vtd_report_dmar_fault(IntelIOMMUState *s, uint16_t source_id,
+                                  hwaddr addr, VTDFaultReason fault,
+                                  bool is_write)
+{
+    uint32_t fsts_reg = get_long_raw(s, DMAR_FSTS_REG);
+
+    assert(fault < VTD_FR_MAX);
+
+    if (fault == VTD_FR_RESERVED_ERR) {
+        /* This is not a normal fault reason case. Drop it. */
+        return;
+    }
+
+    VTD_DPRINTF(FLOG, "sid 0x%"PRIx16 ", fault %d, addr 0x%"PRIx64
+                ", is_write %d", source_id, fault, addr, is_write);
+
+    /* Check PFO field in FSTS_REG */
+    if (fsts_reg & VTD_FSTS_PFO) {
+        VTD_DPRINTF(FLOG, "new fault is not recorded due to "
+                    "Primary Fault Overflow");
+        return;
+    }
+
+    /* Compression of multiple faults from the same requester */
+    if (try_collapse_fault(s, source_id)) {
+        VTD_DPRINTF(FLOG, "new fault is not recorded due to "
+                    "compression of faults");
+        return;
+    }
+
+    /* Check next_frcd_reg to see whether it is overflow now */
+    if (is_frcd_set(s, s->next_frcd_reg)) {
+        VTD_DPRINTF(FLOG, "Primary Fault Overflow and "
+                    "new fault is not recorded, set PFO field");
+        set_clear_mask_long(s, DMAR_FSTS_REG, 0, VTD_FSTS_PFO);
+        return;
+    }
+
+    record_frcd(s, s->next_frcd_reg, source_id, addr, fault, is_write);
+
+    if (fsts_reg & VTD_FSTS_PPF) {
+        /* There are already one or more pending faults */
+        VTD_DPRINTF(FLOG, "there are pending faults already, "
+                    "fault event is not generated");
+        frcd_set_f(s, s->next_frcd_reg);
+        s->next_frcd_reg++;
+        if (s->next_frcd_reg == DMAR_FRCD_REG_NR) {
+            s->next_frcd_reg = 0;
+        }
+    } else {
+        set_clear_mask_long(s, DMAR_FSTS_REG, VTD_FSTS_FRI_MASK,
+                            VTD_FSTS_FRI(s->next_frcd_reg));
+        frcd_set_f(s, s->next_frcd_reg); /* It will also set PPF */
+        s->next_frcd_reg++;
+        if (s->next_frcd_reg == DMAR_FRCD_REG_NR) {
+            s->next_frcd_reg = 0;
+        }
+
+        /* This case actually cause the PPF to be Set (in frcd_set_f).
+         * So generate fault event (interrupt).
+         */
+         vtd_generate_fault_event(s, fsts_reg);
+    }
+}
+
+
 static inline bool root_entry_present(VTDRootEntry *root)
 {
     return root->val & VTD_ROOT_ENTRY_P;
 }
 
-static bool get_root_entry(IntelIOMMUState *s, int index, VTDRootEntry *re)
+static int get_root_entry(IntelIOMMUState *s, int index, VTDRootEntry *re)
 {
     dma_addr_t addr;
 
@@ -150,13 +344,14 @@ static bool get_root_entry(IntelIOMMUState *s, int index, VTDRootEntry *re)
 
     if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
         /* FIXME: fault reporting */
-        VTD_DPRINTF(GENERAL, "error: fail to read root table");
+        VTD_DPRINTF(GENERAL, "error: fail to access root-entry at 0x%"PRIx64
+                    " + %d", s->root, index);
         re->val = 0;
-        return false;
+        return -VTD_FR_ROOT_TABLE_INV;
     }
 
     re->val = le64_to_cpu(re->val);
-    return true;
+    return VTD_FR_RESERVED;
 }
 
 static inline bool context_entry_present(VTDContextEntry *context)
@@ -164,7 +359,7 @@ static inline bool context_entry_present(VTDContextEntry *context)
     return context->lo & VTD_CONTEXT_ENTRY_P;
 }
 
-static bool get_context_entry_from_root(VTDRootEntry *root, int index,
+static int get_context_entry_from_root(VTDRootEntry *root, int index,
                                         VTDContextEntry *ce)
 {
     dma_addr_t addr;
@@ -172,7 +367,8 @@ static bool get_context_entry_from_root(VTDRootEntry *root, int index,
     if (!root_entry_present(root)) {
         ce->lo = 0;
         ce->hi = 0;
-        return false;
+        VTD_DPRINTF(GENERAL, "error: root-entry is not present");
+        return -VTD_FR_ROOT_ENTRY_P;
     }
 
     assert(index >= 0 && index < VTD_CONTEXT_ENTRY_NR);
@@ -181,15 +377,16 @@ static bool get_context_entry_from_root(VTDRootEntry *root, int index,
 
     if (dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce))) {
         /* FIXME: fault reporting */
-        VTD_DPRINTF(GENERAL, "error: fail to read context_entry table");
+        VTD_DPRINTF(GENERAL, "error: fail to access context-entry at 0x%"PRIx64
+                    " + %d", (uint64_t)(root->val & VTD_ROOT_ENTRY_CTP), index);
         ce->lo = 0;
         ce->hi = 0;
-        return false;
+        return -VTD_FR_CONTEXT_TABLE_INV;
     }
 
     ce->lo = le64_to_cpu(ce->lo);
     ce->hi = le64_to_cpu(ce->hi);
-    return true;
+    return VTD_FR_RESERVED;
 }
 
 static inline dma_addr_t get_slpt_base_from_context(VTDContextEntry *ce)
@@ -250,8 +447,6 @@ static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
                         base_addr + index * sizeof(slpte), &slpte,
                         sizeof(slpte))) {
         /* FIXME: fault reporting */
-        VTD_DPRINTF(GENERAL,
-                    "error: fail to read second level paging structures");
         slpte = (uint64_t)-1;
         return slpte;
     }
@@ -276,15 +471,17 @@ static inline int get_level_from_context_entry(VTDContextEntry *ce)
     return 2 + (ce->hi & VTD_CONTEXT_ENTRY_AW);
 }
 
-/* Given the @gpa, return relevant slpte. @slpte_level will be the last level
+/* Given the @gpa, get relevant @slptep. @slpte_level will be the last level
  * of the translation, can be used for deciding the size of large page.
  */
-static uint64_t gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
-                             int *slpte_level)
+static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
+                        uint64_t *slptep, int *slpte_level)
 {
     dma_addr_t addr = get_slpt_base_from_context(ce);
     int level = get_level_from_context_entry(ce);
+    int highest_level = level;
     int offset;
+    int ret_fr;
     uint64_t slpte;
 
     while (true) {
@@ -292,80 +489,106 @@ static uint64_t gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
         slpte = get_slpte(addr, offset);
 
         if (slpte == (uint64_t)-1) {
+            VTD_DPRINTF(GENERAL, "error: fail to access second-level paging "
+                        "entry at level %d for gpa 0x%"PRIx64,
+                        level, gpa);
             *slpte_level = level;
-            break;
+            *slptep = 0;
+            if (highest_level == level) {
+                ret_fr = -VTD_FR_RESERVED_ERR;
+            } else {
+                ret_fr = -VTD_FR_PAGING_ENTRY_INV;
+            }
+            return ret_fr;
         }
         if (!slpte_present(slpte)) {
-            VTD_DPRINTF(GENERAL,
-                        "error: slpte 0x%"PRIx64 " is not present", slpte);
-            slpte = (uint64_t)-1;
+            VTD_DPRINTF(GENERAL, "error: level %d slpte 0x%"PRIx64
+                        " for gpa 0x%"PRIx64 " is not present",
+                        level, slpte, gpa);
+            *slptep = 0;
             *slpte_level = level;
-            break;
+            ret_fr = -VTD_FR_RESERVED_ERR;
+            return ret_fr;
         }
         if (is_last_slpte(slpte, level)) {
             *slpte_level = level;
-            break;
+            *slptep = slpte;
+            return VTD_FR_RESERVED;
         }
         addr = get_slpte_addr(slpte);
         level--;
     }
-    return slpte;
 }
 
 /* Map a device to its corresponding domain (context_entry) */
-static inline bool dev_to_context_entry(IntelIOMMUState *s, int bus_num,
+static inline int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
                                         int devfn, VTDContextEntry *ce)
 {
     VTDRootEntry re;
+    int ret_fr;
 
     assert(0 <= bus_num && bus_num < VTD_PCI_BUS_MAX);
     assert(0 <= devfn && devfn < VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX);
 
-    if (!get_root_entry(s, bus_num, &re)) {
+    ret_fr = get_root_entry(s, bus_num, &re);
+    if (ret_fr) {
         /* FIXME: fault reporting */
-        return false;
+        return ret_fr;
     }
+
     if (!root_entry_present(&re)) {
         /* FIXME: fault reporting */
         VTD_DPRINTF(GENERAL, "error: root-entry #%d is not present", bus_num);
-        return false;
+        return -VTD_FR_ROOT_ENTRY_P;
     }
-    if (!get_context_entry_from_root(&re, devfn, ce)) {
+
+    ret_fr = get_context_entry_from_root(&re, devfn, ce);
+    if (ret_fr) {
         /* FIXME: fault reporting */
-        return false;
+        return ret_fr;
     }
+
     if (!context_entry_present(ce)) {
         /* FIXME: fault reporting */
         VTD_DPRINTF(GENERAL,
                     "error: context-entry #%d(bus #%d) is not present", devfn,
                     bus_num);
-        return false;
+        return -VTD_FR_CONTEXT_ENTRY_P;
     }
 
-    return true;
+    return VTD_FR_RESERVED;
 }
 
-/* Do a paging-structures walk to do a iommu translation
+static inline uint16_t make_source_id(int bus_num, int devfn)
+{
+    return ((bus_num & 0xffUL) << 8) | (devfn & 0xffUL);
+}
+/* Map dev to context-entry then do a paging-structures walk to do a iommu
+ * translation.
  * @bus_num: The bus number
  * @devfn: The devfn, which is the  combined of device and function number
+ * @is_write: The access is a write operation
  * @entry: IOMMUTLBEntry that contain the addr to be translated and result
  */
 static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
-                            hwaddr addr, IOMMUTLBEntry *entry)
+                            hwaddr addr, bool is_write, IOMMUTLBEntry *entry)
 {
     VTDContextEntry ce;
     uint64_t slpte;
     int level;
     uint64_t page_mask = VTD_PAGE_MASK_4K;
+    uint16_t source_id = make_source_id(bus_num, devfn);
+    int ret_fr;
 
-    if (!dev_to_context_entry(s, bus_num, devfn, &ce)) {
+    ret_fr = dev_to_context_entry(s, bus_num, devfn, &ce);
+    if (ret_fr) {
+        vtd_report_dmar_fault(s, source_id, addr, -ret_fr, is_write);
         return;
     }
 
-    slpte = gpa_to_slpte(&ce, addr, &level);
-    if (slpte == (uint64_t)-1) {
-        /* FIXME: fault reporting */
-        VTD_DPRINTF(GENERAL, "error: can't get slpte for gpa %"PRIx64, addr);
+    ret_fr = gpa_to_slpte(&ce, addr, &slpte, &level);
+    if (ret_fr) {
+        vtd_report_dmar_fault(s, source_id, addr, -ret_fr, is_write);
         return;
     }
 
@@ -406,17 +629,17 @@ static uint64_t vtd_context_cache_invalidate(IntelIOMMUState *s, uint64_t val)
 
     switch (type) {
     case VTD_CCMD_GLOBAL_INVL:
-        VTD_DPRINTF(CSR, "Global invalidation request");
+        VTD_DPRINTF(INV, "Global invalidation request");
         caig = VTD_CCMD_GLOBAL_INVL_A;
         break;
 
     case VTD_CCMD_DOMAIN_INVL:
-        VTD_DPRINTF(CSR, "Domain-selective invalidation request");
+        VTD_DPRINTF(INV, "Domain-selective invalidation request");
         caig = VTD_CCMD_DOMAIN_INVL_A;
         break;
 
     case VTD_CCMD_DEVICE_INVL:
-        VTD_DPRINTF(CSR, "Domain-selective invalidation request");
+        VTD_DPRINTF(INV, "Domain-selective invalidation request");
         caig = VTD_CCMD_DEVICE_INVL_A;
         break;
 
@@ -440,17 +663,17 @@ static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
 
     switch (type) {
     case VTD_TLB_GLOBAL_FLUSH:
-        VTD_DPRINTF(CSR, "Global IOTLB flush");
+        VTD_DPRINTF(INV, "Global IOTLB flush");
         iaig = VTD_TLB_GLOBAL_FLUSH_A;
         break;
 
     case VTD_TLB_DSI_FLUSH:
-        VTD_DPRINTF(CSR, "Domain-selective IOTLB flush");
+        VTD_DPRINTF(INV, "Domain-selective IOTLB flush");
         iaig = VTD_TLB_DSI_FLUSH_A;
         break;
 
     case VTD_TLB_PSI_FLUSH:
-        VTD_DPRINTF(CSR, "Page-selective-within-domain IOTLB flush");
+        VTD_DPRINTF(INV, "Page-selective-within-domain IOTLB flush");
         iaig = VTD_TLB_PSI_FLUSH_A;
         break;
 
@@ -473,20 +696,19 @@ static inline bool queued_inv_disable_check(IntelIOMMUState *s)
            (s->iq_last_desc_type == VTD_INV_DESC_WAIT);
 }
 
-/* FIXME: Not implemented yet */
 static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
 {
     uint64_t iqa_val = get_quad_raw(s, DMAR_IQA_REG);
-    VTD_DPRINTF(CSR, "Queued Invalidation Enable %s", (en ? "on" : "off"));
+    VTD_DPRINTF(INV, "Queued Invalidation Enable %s", (en ? "on" : "off"));
 
     if (en) {
         if (queued_inv_enable_check(s)) {
             s->iq = iqa_val & VTD_IQA_IQA_MASK;
             /* 2^(x+8) entries */
-            s->iq_size = 1 << ((iqa_val & VTD_IQA_QS) + 8);
+            s->iq_size = 1UL << ((iqa_val & VTD_IQA_QS) + 8);
             s->qi_enabled = true;
-            VTD_DPRINTF(CSR, "DMAR_IQA_REG 0x%"PRIx64, iqa_val);
-            VTD_DPRINTF(CSR, "Invalidation Queue addr 0x%"PRIx64 " size %d",
+            VTD_DPRINTF(INV, "DMAR_IQA_REG 0x%"PRIx64, iqa_val);
+            VTD_DPRINTF(INV, "Invalidation Queue addr 0x%"PRIx64 " size %d",
                         s->iq, s->iq_size);
             /* Ok - report back to driver */
             set_clear_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_QIES);
@@ -531,6 +753,9 @@ static void handle_gcmd_te(IntelIOMMUState *s, bool en)
         set_clear_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_TES);
     } else {
         s->dmar_enabled = false;
+
+        /* Clear the index of Fault Recording Register */
+        s->next_frcd_reg = 0;
         /* Ok - report back to driver */
         set_clear_mask_long(s, DMAR_GSTS_REG, VTD_GSTS_TES, 0);
     }
@@ -571,7 +796,7 @@ static void handle_ccmd_write(IntelIOMMUState *s)
         /* Invalidation completed. Change something to show */
         set_clear_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_ICC, 0ULL);
         ret = set_clear_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_CAIG_MASK, ret);
-        VTD_DPRINTF(CSR, "CCMD_REG write-back val: 0x%"PRIx64, ret);
+        VTD_DPRINTF(INV, "CCMD_REG write-back val: 0x%"PRIx64, ret);
     }
 }
 
@@ -589,7 +814,7 @@ static void handle_iotlb_write(IntelIOMMUState *s)
         set_clear_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_IVT, 0ULL);
         ret = set_clear_mask_quad(s, DMAR_IOTLB_REG,
                                   VTD_TLB_FLUSH_GRANU_MASK_A, ret);
-        VTD_DPRINTF(CSR, "IOTLB_REG write-back val: 0x%"PRIx64, ret);
+        VTD_DPRINTF(INV, "IOTLB_REG write-back val: 0x%"PRIx64, ret);
     }
 }
 
@@ -625,7 +850,7 @@ static void vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
                                VTD_INV_DESC_WAIT_DATA_SHIFT);
         /* FIXME: need to be masked with HAW? */
         dma_addr_t status_addr = inv_desc->hi;
-        VTD_DPRINTF(CSR, "status data 0x%x, status addr 0x%"PRIx64,
+        VTD_DPRINTF(INV, "status data 0x%x, status addr 0x%"PRIx64,
                     status_data, status_addr);
         if (dma_memory_write(&address_space_memory, status_addr, &status_data,
                              sizeof(status_data))) {
@@ -635,10 +860,10 @@ static void vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
     } else if (inv_desc->lo & VTD_INV_DESC_WAIT_IF) {
         /* Interrupt flag */
         /* FIXME: not implemented yet */
-        VTD_DPRINTF(CSR, "Invalidation Wait Descriptor interrupt completion");
+        VTD_DPRINTF(INV, "Invalidation Wait Descriptor interrupt completion");
     } else {
         /* FIXME: fault reporting */
-        VTD_DPRINTF(CSR, "error: Invalidation Wait Descriptor error");
+        VTD_DPRINTF(GENERAL, "error: Invalidation Wait Descriptor error");
     }
 }
 
@@ -652,15 +877,15 @@ static inline void vtd_process_inv_desc(IntelIOMMUState *s)
 
     switch (inv_desc.lo & VTD_INV_DESC_TYPE) {
     case VTD_INV_DESC_CC:
-        VTD_DPRINTF(CSR, "Context-cache Invalidate Descriptor");
+        VTD_DPRINTF(INV, "Context-cache Invalidate Descriptor");
         break;
 
     case VTD_INV_DESC_IOTLB:
-        VTD_DPRINTF(CSR, "IOTLB Invalidate Descriptor");
+        VTD_DPRINTF(INV, "IOTLB Invalidate Descriptor");
         break;
 
     case VTD_INV_DESC_WAIT:
-        VTD_DPRINTF(CSR, "Invalidation Wait Descriptor hi 0x%"PRIx64
+        VTD_DPRINTF(INV, "Invalidation Wait Descriptor hi 0x%"PRIx64
                     " lo 0x%"PRIx64, inv_desc.hi, inv_desc.lo);
         vtd_process_wait_desc(s, &inv_desc);
         break;
@@ -679,12 +904,12 @@ static inline void vtd_process_inv_desc(IntelIOMMUState *s)
 }
 
 /* Handle write to Invalidation Queue Tail Register */
-static void handle_iqt_write(IntelIOMMUState *s)
+static inline void handle_iqt_write(IntelIOMMUState *s)
 {
     uint64_t val = get_quad_raw(s, DMAR_IQT_REG);
 
     s->iq_tail = VTD_IQT_QT(val);
-    VTD_DPRINTF(CSR, "New iq tail %d", s->iq_tail);
+    VTD_DPRINTF(INV, "New iq tail %d", s->iq_tail);
 
     if (s->qi_enabled) {
         /* Process Invalidation Queue here */
@@ -693,6 +918,35 @@ static void handle_iqt_write(IntelIOMMUState *s)
         }
         set_quad_raw(s, DMAR_IQH_REG,
                      (s->iq_head << VTD_IQH_QH_SHIFT) & VTD_IQH_QH_MASK);
+    }
+}
+
+static inline void handle_fsts_write(IntelIOMMUState *s)
+{
+    uint32_t fsts_reg = get_long_raw(s, DMAR_FSTS_REG);
+    uint32_t fectl_reg = get_long_raw(s, DMAR_FECTL_REG);
+    uint32_t status_fields = VTD_FSTS_PFO | VTD_FSTS_PPF | VTD_FSTS_IQE;
+
+    if ((fectl_reg & VTD_FECTL_IP) && !(fsts_reg & status_fields)) {
+        set_clear_mask_long(s, DMAR_FECTL_REG, VTD_FECTL_IP, 0);
+        VTD_DPRINTF(FLOG, "all pending interrupt conditions serviced, clear "
+                    "IP field of FSTS_REG");
+    }
+}
+
+static inline void handle_fectl_write(IntelIOMMUState *s)
+{
+    uint32_t fectl_reg;
+    /* When software clears the IM field, check the IP field. But do we
+     * need to compare the old value and the new value to conclude that
+     * software clears the IM field? Or just check if the IM field is zero?
+     */
+    fectl_reg = get_long_raw(s, DMAR_FECTL_REG);
+    if ((fectl_reg & VTD_FECTL_IP) && !(fectl_reg & VTD_FECTL_IM)) {
+        vtd_generate_interrupt(s);
+        set_clear_mask_long(s, DMAR_FECTL_REG, VTD_FECTL_IP, 0);
+        VTD_DPRINTF(FLOG, "IM field is cleared, generate "
+                    "fault event interrupt");
     }
 }
 
@@ -798,7 +1052,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* IOTLB Invalidation Register, 64-bit */
     case DMAR_IOTLB_REG:
-        VTD_DPRINTF(CSR, "DMAR_IOTLB_REG write addr 0x%"PRIx64
+        VTD_DPRINTF(INV, "DMAR_IOTLB_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
@@ -809,7 +1063,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_IOTLB_REG_HI:
-        VTD_DPRINTF(CSR, "DMAR_IOTLB_REG_HI write addr 0x%"PRIx64
+        VTD_DPRINTF(INV, "DMAR_IOTLB_REG_HI write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         assert(size == 4);
         set_long(s, addr, val);
@@ -818,17 +1072,44 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Fault Status Register, 32-bit */
     case DMAR_FSTS_REG:
-    /* Fault Event Data Register, 32-bit */
-    case DMAR_FEDATA_REG:
-    /* Fault Event Address Register, 32-bit */
-    case DMAR_FEADDR_REG:
-    /* Fault Event Upper Address Register, 32-bit */
-    case DMAR_FEUADDR_REG:
+        VTD_DPRINTF(FLOG, "DMAR_FSTS_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        set_long(s, addr, val);
+        handle_fsts_write(s);
+        break;
+
     /* Fault Event Control Register, 32-bit */
     case DMAR_FECTL_REG:
+        VTD_DPRINTF(FLOG, "DMAR_FECTL_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        set_long(s, addr, val);
+        handle_fectl_write(s);
+        break;
+
+    /* Fault Event Data Register, 32-bit */
+    case DMAR_FEDATA_REG:
+        VTD_DPRINTF(FLOG, "DMAR_FEDATA_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        set_long(s, addr, val);
+        break;
+
+    /* Fault Event Address Register, 32-bit */
+    case DMAR_FEADDR_REG:
+        VTD_DPRINTF(FLOG, "DMAR_FEADDR_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        set_long(s, addr, val);
+        break;
+
+    /* Fault Event Upper Address Register, 32-bit */
+    case DMAR_FEUADDR_REG:
+        VTD_DPRINTF(FLOG, "DMAR_FEUADDR_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        set_long(s, addr, val);
+        break;
+
     /* Protected Memory Enable Register, 32-bit */
     case DMAR_PMEN_REG:
-        VTD_DPRINTF(CSR, "known reg write addr 0x%"PRIx64
+        VTD_DPRINTF(CSR, "DMAR_PMEN_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         set_long(s, addr, val);
         break;
@@ -854,7 +1135,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Invalidation Queue Tail Register, 64-bit */
     case DMAR_IQT_REG:
-        VTD_DPRINTF(CSR, "DMAR_IQT_REG write addr 0x%"PRIx64
+        VTD_DPRINTF(INV, "DMAR_IQT_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
@@ -865,7 +1146,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_IQT_REG_HI:
-        VTD_DPRINTF(CSR, "DMAR_IQT_REG_HI write addr 0x%"PRIx64
+        VTD_DPRINTF(INV, "DMAR_IQT_REG_HI write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         assert(size == 4);
         set_long(s, addr, val);
@@ -874,7 +1155,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
     /* Invalidation Queue Address Register, 64-bit */
     case DMAR_IQA_REG:
-        VTD_DPRINTF(CSR, "DMAR_IQA_REG write addr 0x%"PRIx64
+        VTD_DPRINTF(INV, "DMAR_IQA_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         if (size == 4) {
             set_long(s, addr, val);
@@ -884,10 +1165,49 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         break;
 
     case DMAR_IQA_REG_HI:
-        VTD_DPRINTF(CSR, "DMAR_IQA_REG_HI write addr 0x%"PRIx64
+        VTD_DPRINTF(INV, "DMAR_IQA_REG_HI write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
         assert(size == 4);
         set_long(s, addr, val);
+        break;
+
+    /* Fault Recording Registers, 128-bit */
+    case DMAR_FRCD_REG_0_0:
+        VTD_DPRINTF(FLOG, "DMAR_FRCD_REG_0_0 write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        if (size == 4) {
+            set_long(s, addr, val);
+        } else {
+            set_quad(s, addr, val);
+        }
+        break;
+
+    case DMAR_FRCD_REG_0_1:
+        VTD_DPRINTF(FLOG, "DMAR_FRCD_REG_0_1 write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
+        set_long(s, addr, val);
+        break;
+
+    case DMAR_FRCD_REG_0_2:
+        VTD_DPRINTF(FLOG, "DMAR_FRCD_REG_0_2 write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        if (size == 4) {
+            set_long(s, addr, val);
+        } else {
+            set_quad(s, addr, val);
+            /* May clear bit 127 (Fault), update PPF */
+            update_fsts_ppf(s);
+        }
+        break;
+
+    case DMAR_FRCD_REG_0_3:
+        VTD_DPRINTF(FLOG, "DMAR_FRCD_REG_0_3 write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
+        set_long(s, addr, val);
+        /* May clear bit 127 (Fault), update PPF */
+        update_fsts_ppf(s);
         break;
 
     default:
@@ -910,7 +1230,7 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
     int devfn = vtd_as->devfn;
     IOMMUTLBEntry ret = {
         .target_as = &address_space_memory,
-        .iova = 0,
+        .iova = addr,
         .translated_addr = 0,
         .addr_mask = ~(hwaddr)0,
         .perm = IOMMU_NONE,
@@ -925,7 +1245,7 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
         return ret;
     }
 
-    iommu_translate(s, bus_num, devfn, addr, &ret);
+    iommu_translate(s, bus_num, devfn, addr, false, &ret);
 
     VTD_DPRINTF(MMU,
                 "bus %d slot %d func %d devfn %d gpa %"PRIx64 " hpa %"PRIx64,
@@ -984,10 +1304,11 @@ static void do_vtd_init(IntelIOMMUState *s)
     s->iq_size = 0;
     s->qi_enabled = false;
     s->iq_last_desc_type = VTD_INV_DESC_NONE;
+    s->next_frcd_reg = 0;
 
     /* b.0:2 = 6: Number of domains supported: 64K using 16 bit ids
-     * b.3   = 0: No advanced fault logging
-     * b.4   = 0: No required write buffer flushing
+     * b.3   = 0: Advanced fault logging not supported
+     * b.4   = 0: Required write buffer flushing not supported
      * b.5   = 0: Protected low memory region not supported
      * b.6   = 0: Protected high memory region not supported
      * b.8:12 = 2: SAGAW(Supported Adjusted Guest Address Widths), 39-bit,
@@ -1004,7 +1325,7 @@ static void do_vtd_init(IntelIOMMUState *s)
                                         VTD_CAP_SAGAW_39bit;
 
     /* b.1 = 1: QI(Queued Invalidation support) supported
-     * b.2 = 0: DT(Device-TLB support)
+     * b.2 = 0: DT(Device-TLB support) not supported
      * b.3 = 0: IR(Interrupt Remapping support) not supported
      * b.4 = 0: EIM(Extended Interrupt Mode) not supported
      * b.8:17 = 15: IRO(IOTLB Register Offset)
@@ -1022,23 +1343,28 @@ static void do_vtd_init(IntelIOMMUState *s)
     define_quad(s, DMAR_RTADDR_REG, 0, 0xfffffffffffff000ULL, 0);
     define_quad(s, DMAR_CCMD_REG, 0, 0xe0000003ffffffffULL, 0);
     define_quad_wo(s, DMAR_CCMD_REG, 0x3ffff0000ULL);
-    define_long(s, DMAR_FSTS_REG, 0, 0, 0xfdUL);
-    define_long(s, DMAR_FECTL_REG, 0x80000000UL, 0x80000000UL, 0);
-    define_long(s, DMAR_FEDATA_REG, 0, 0xffffffffUL, 0); /* All bits RW */
-    define_long(s, DMAR_FEADDR_REG, 0, 0xfffffffcUL, 0); /* 31:2 RW */
-    define_long(s, DMAR_FEUADDR_REG, 0, 0xffffffffUL, 0); /* 31:0 RW */
 
-    define_quad(s, DMAR_AFLOG_REG, 0, 0xffffffffffffff00ULL, 0);
+    /* Advanced Fault Logging not supported */
+    define_long(s, DMAR_FSTS_REG, 0, 0, 0x11UL);
+    define_long(s, DMAR_FECTL_REG, 0x80000000UL, 0x80000000UL, 0);
+    define_long(s, DMAR_FEDATA_REG, 0, 0x0000ffffUL, 0); /* 15:0 RW */
+    define_long(s, DMAR_FEADDR_REG, 0, 0xfffffffcUL, 0); /* 31:2 RW */
+
+    /* Treated as RsvdZ when EIM in ECAP_REG is not supported
+     * define_long(s, DMAR_FEUADDR_REG, 0, 0xffffffffUL, 0);
+     */
+    define_long(s, DMAR_FEUADDR_REG, 0, 0, 0);
+
+    /* Treated as RsvdZ when AFL in Capability Register is not supported.
+     * define_quad(s, DMAR_AFLOG_REG, 0, 0xffffffffffffff00ULL, 0);
+     */
+    define_quad(s, DMAR_AFLOG_REG, 0, 0, 0);
 
     /* Treated as RO for implementations that PLMR and PHMR fields reported
      * as Clear in the CAP_REG.
      * define_long(s, DMAR_PMEN_REG, 0, 0x80000000UL, 0);
      */
     define_long(s, DMAR_PMEN_REG, 0, 0, 0);
-
-    /* TBD: The definition of these are dynamic:
-     * DMAR_PLMBASE_REG, DMAR_PLMLIMIT_REG, DMAR_PHMBASE_REG, DMAR_PHMLIMIT_REG
-     */
 
     /* Bits 18:4 (0x7fff0) is RO, rest is RsvdZ */
     define_quad(s, DMAR_IQH_REG, 0, 0, 0);
@@ -1064,7 +1390,7 @@ static void do_vtd_init(IntelIOMMUState *s)
     define_long(s, DMAR_PEADDR_REG, 0, 0xfffffffcUL, 0);
     define_long(s, DMAR_PEUADDR_REG, 0, 0xffffffffUL, 0);
 
-    /* When MTS not supported in ECAP_REG, these regs are RsvdZ */
+    /* When MTS is not supported in ECAP_REG, these regs are RsvdZ */
     define_long(s, DMAR_MTRRCAP_REG, 0, 0, 0);
     define_long(s, DMAR_MTRRDEF_REG, 0, 0, 0);
 
@@ -1072,6 +1398,10 @@ static void do_vtd_init(IntelIOMMUState *s)
     define_quad(s, DMAR_IOTLB_REG, 0, 0Xb003ffff00000000ULL, 0);
     define_quad(s, DMAR_IVA_REG, 0, 0xfffffffffffff07fULL, 0);
     define_quad_wo(s, DMAR_IVA_REG, 0xfffffffffffff07fULL);
+
+    /* Fault Recording Registers, 128-bit */
+    define_quad(s, DMAR_FRCD_REG_0_0, 0, 0, 0);
+    define_quad(s, DMAR_FRCD_REG_0_2, 0, 0, 0x8000000000000000ULL);
 }
 
 /* Reset function of QOM

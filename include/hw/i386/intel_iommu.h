@@ -37,7 +37,7 @@
 #define VTD_PCI_SLOT(devfn)         (((devfn) >> 3) & 0x1f)
 #define VTD_PCI_FUNC(devfn)         ((devfn) & 0x07)
 
-#define DMAR_REG_SIZE   0x2a0
+#define DMAR_REG_SIZE   0x230
 
 /* FIXME: do not know how to decide the haw */
 #define VTD_HOST_ADDRESS_WIDTH  39
@@ -66,12 +66,18 @@ struct IntelIOMMUState {
     dma_addr_t root;        /* Current root table pointer */
     bool root_extended;     /* Type of root table (extended or not) */
     bool dmar_enabled;      /* Set if DMA remapping is enabled */
+
     uint16_t iq_head;       /* Current invalidation queue head */
     uint16_t iq_tail;       /* Current invalidation queue tail */
     dma_addr_t iq;          /* Current invalidation queue (IQ) pointer */
     uint16_t iq_size;       /* IQ Size in number of entries */
     bool qi_enabled;        /* Set if the QI is enabled */
     uint8_t iq_last_desc_type; /* The type of last completed descriptor */
+
+    /* The index of the Fault Recording Register to be used next.
+     * Wraps around from N-1 to 0, where N is the number of FRCD_REG.
+     */
+    uint16_t next_frcd_reg;
 
     MemoryRegionIOMMUOps iommu_ops;
     VTDAddressSpace **address_spaces[VTD_PCI_BUS_MAX];
