@@ -337,6 +337,17 @@ static void vtd_report_dmar_fault(IntelIOMMUState *s, uint16_t source_id,
     }
 }
 
+/* Handle Invalidation Queue Errors of queued invalidation interface error
+ * conditions.
+ */
+static void vtd_handle_inv_queue_error(IntelIOMMUState *s)
+{
+    uint32_t fsts_reg = get_long_raw(s, DMAR_FSTS_REG);
+
+    set_clear_mask_long(s, DMAR_FSTS_REG, 0, VTD_FSTS_IQE);
+    vtd_generate_fault_event(s, fsts_reg);
+}
+
 /* Set the IWC field and try to generate an invalidation completion interrupt */
 static void vtd_generate_completion_event(IntelIOMMUState *s)
 {
@@ -869,7 +880,6 @@ static bool get_inv_desc(dma_addr_t base_addr, uint16_t offset,
     dma_addr_t addr = base_addr + offset * sizeof(*inv_desc);
     if (dma_memory_read(&address_space_memory, addr, inv_desc,
         sizeof(*inv_desc))) {
-        /* FIXME: fault reporting */
         VTD_DPRINTF(GENERAL, "error: fail to fetch Invalidation Descriptor "
                     "base_addr 0x%"PRIx64 " offset %u", base_addr, offset);
         inv_desc->lo = 0;
@@ -883,7 +893,7 @@ static bool get_inv_desc(dma_addr_t base_addr, uint16_t offset,
     return true;
 }
 
-static void vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
+static bool vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
 {
     if (inv_desc->lo & VTD_INV_DESC_WAIT_SW) {
         /* Status Write */
@@ -899,55 +909,88 @@ static void vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
         status_data = cpu_to_le32(status_data);
         if (dma_memory_write(&address_space_memory, status_addr, &status_data,
                              sizeof(status_data))) {
-            /* FIXME: fault reporting */
             VTD_DPRINTF(GENERAL, "error: fail to perform a coherent write");
+            return false;
         }
     } else if (inv_desc->lo & VTD_INV_DESC_WAIT_IF) {
         /* Interrupt flag */
         VTD_DPRINTF(INV, "Invalidation Wait Descriptor interrupt completion");
         vtd_generate_completion_event(s);
     } else {
-        /* FIXME: fault reporting */
-        VTD_DPRINTF(GENERAL, "error: Invalidation Wait Descriptor error");
+        VTD_DPRINTF(GENERAL, "error: invalid Invalidation Wait Descriptor: "
+                    "hi 0x%"PRIx64 " lo 0x%"PRIx64, inv_desc->hi, inv_desc->lo);
+        return false;
     }
+    return true;
 }
 
-static inline void vtd_process_inv_desc(IntelIOMMUState *s)
+static inline bool vtd_process_inv_desc(IntelIOMMUState *s)
 {
     VTDInvDesc inv_desc;
     uint8_t desc_type;
 
+    VTD_DPRINTF(INV, "iq head %d", s->iq_head);
+
     if (!get_inv_desc(s->iq, s->iq_head, &inv_desc)) {
-        return;
+        s->iq_last_desc_type = VTD_INV_DESC_NONE;
+        return false;
     }
     desc_type = inv_desc.lo & VTD_INV_DESC_TYPE;
+    s->iq_last_desc_type = desc_type; /* Should update at first or at last? */
 
     switch (desc_type) {
     case VTD_INV_DESC_CC:
-        VTD_DPRINTF(INV, "Context-cache Invalidate Descriptor");
+        VTD_DPRINTF(INV, "Context-cache Invalidate Descriptor hi 0x%"PRIx64
+                    " lo 0x%"PRIx64, inv_desc.hi, inv_desc.lo);
         break;
 
     case VTD_INV_DESC_IOTLB:
-        VTD_DPRINTF(INV, "IOTLB Invalidate Descriptor");
+        VTD_DPRINTF(INV, "IOTLB Invalidate Descriptor hi 0x%"PRIx64
+                    " lo 0x%"PRIx64, inv_desc.hi, inv_desc.lo);
         break;
 
     case VTD_INV_DESC_WAIT:
         VTD_DPRINTF(INV, "Invalidation Wait Descriptor hi 0x%"PRIx64
                     " lo 0x%"PRIx64, inv_desc.hi, inv_desc.lo);
-        vtd_process_wait_desc(s, &inv_desc);
+        if (!vtd_process_wait_desc(s, &inv_desc)) {
+            return false;
+        }
         break;
 
     default:
-        /* FIXME: fault reporting */
-        VTD_DPRINTF(GENERAL, "error: unhandled Invalidation Descriptor "
-                    "hi 0x%"PRIx64 " lo 0x%"PRIx64,
-                    inv_desc.hi, inv_desc.lo);
-        break;
+        VTD_DPRINTF(GENERAL, "error: unkonw Invalidation Descriptor type "
+                    "hi 0x%"PRIx64 " lo 0x%"PRIx64 " type %u",
+                    inv_desc.hi, inv_desc.lo, desc_type);
+        return false;
     }
-    s->iq_last_desc_type = desc_type;
     s->iq_head++;
     if (s->iq_head == s->iq_size) {
         s->iq_head = 0;
+    }
+    return true;
+}
+
+/* Try to fetch and process more Invalidation Descriptors */
+static void vtd_fetch_inv_desc(IntelIOMMUState *s)
+{
+    VTD_DPRINTF(INV, "fetch Invalidation Descriptors");
+    if (s->iq_tail >= s->iq_size) {
+        /* Detects an invalid Tail pointer */
+        VTD_DPRINTF(GENERAL, "error: iq_tail is %d while iq_size is %d",
+                    s->iq_tail, s->iq_size);
+        vtd_handle_inv_queue_error(s);
+        return;
+    }
+    while (s->iq_head != s->iq_tail) {
+        if (!vtd_process_inv_desc(s)) {
+            /* Invalidation Queue Errors */
+            vtd_handle_inv_queue_error(s);
+            break;
+        }
+        /* Must update the IQH_REG in time */
+        set_quad_raw(s, DMAR_IQH_REG,
+                 (((uint64_t)(s->iq_head)) << VTD_IQH_QH_SHIFT) &
+                 VTD_IQH_QH_MASK);
     }
 }
 
@@ -961,12 +1004,7 @@ static inline void handle_iqt_write(IntelIOMMUState *s)
 
     if (s->qi_enabled && !(get_long_raw(s, DMAR_FSTS_REG) & VTD_FSTS_IQE)) {
         /* Process Invalidation Queue here */
-        while (s->iq_head != s->iq_tail) {
-            vtd_process_inv_desc(s);
-        }
-        set_quad_raw(s, DMAR_IQH_REG,
-                     (((uint64_t)(s->iq_head)) << VTD_IQH_QH_SHIFT) &
-                     VTD_IQH_QH_MASK);
+        vtd_fetch_inv_desc(s);
     }
 }
 
@@ -981,6 +1019,9 @@ static inline void handle_fsts_write(IntelIOMMUState *s)
         VTD_DPRINTF(FLOG, "all pending interrupt conditions serviced, clear "
                     "IP field of FECTL_REG");
     }
+    /* When IQE is Clear, should we try to fetch some Invalidation Descriptors
+     * if there are any when Queued Invalidation is enabled?
+     */
 }
 
 static inline void handle_fectl_write(IntelIOMMUState *s)
