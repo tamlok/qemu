@@ -692,7 +692,7 @@ static inline bool queued_inv_enable_check(IntelIOMMUState *s)
 
 static inline bool queued_inv_disable_check(IntelIOMMUState *s)
 {
-    return (s->iq_tail == s->iq_head) &&
+    return s->qi_enabled && (s->iq_tail == s->iq_head) &&
            (s->iq_last_desc_type == VTD_INV_DESC_WAIT);
 }
 
@@ -852,6 +852,7 @@ static void vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
         dma_addr_t status_addr = inv_desc->hi;
         VTD_DPRINTF(INV, "status data 0x%x, status addr 0x%"PRIx64,
                     status_data, status_addr);
+        status_data = cpu_to_le32(status_data);
         if (dma_memory_write(&address_space_memory, status_addr, &status_data,
                              sizeof(status_data))) {
             /* FIXME: fault reporting */
@@ -870,12 +871,14 @@ static void vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
 static inline void vtd_process_inv_desc(IntelIOMMUState *s)
 {
     VTDInvDesc inv_desc;
+    uint8_t desc_type;
 
     if (!get_inv_desc(s->iq, s->iq_head, &inv_desc)) {
         return;
     }
+    desc_type = inv_desc.lo & VTD_INV_DESC_TYPE;
 
-    switch (inv_desc.lo & VTD_INV_DESC_TYPE) {
+    switch (desc_type) {
     case VTD_INV_DESC_CC:
         VTD_DPRINTF(INV, "Context-cache Invalidate Descriptor");
         break;
@@ -897,6 +900,7 @@ static inline void vtd_process_inv_desc(IntelIOMMUState *s)
                     inv_desc.hi, inv_desc.lo);
         break;
     }
+    s->iq_last_desc_type = desc_type;
     s->iq_head++;
     if (s->iq_head == s->iq_size) {
         s->iq_head = 0;
