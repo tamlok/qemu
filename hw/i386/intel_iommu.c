@@ -136,11 +136,20 @@ static inline uint64_t set_clear_mask_quad(IntelIOMMUState *s, hwaddr addr,
     return new_val;
 }
 
-/* Generate an interrupt via MSI */
-static void vtd_generate_interrupt(IntelIOMMUState *s)
+/* Given the reg addr of both the message data and address, generate an
+ * interrupt via MSI.
+ */
+static void vtd_generate_interrupt(IntelIOMMUState *s, hwaddr mesg_addr_reg,
+                                   hwaddr mesg_data_reg)
 {
-    dma_addr_t addr = get_long_raw(s, DMAR_FEADDR_REG);
-    uint32_t data = get_long_raw(s, DMAR_FEDATA_REG);
+    dma_addr_t addr;
+    uint32_t data;
+
+    assert(mesg_data_reg < DMAR_REG_SIZE);
+    assert(mesg_addr_reg < DMAR_REG_SIZE);
+
+    addr = get_long_raw(s, mesg_addr_reg);
+    data = get_long_raw(s, mesg_data_reg);
 
     VTD_DPRINTF(FLOG, "msi: addr 0x%"PRIx64 " data 0x%"PRIx32, addr, data);
     data = cpu_to_le32(data);
@@ -170,7 +179,7 @@ static void vtd_generate_fault_event(IntelIOMMUState *s, uint32_t pre_fsts)
         VTD_DPRINTF(FLOG, "Interrupt Mask set, fault event is not generated");
     } else {
         /* generate interrupt */
-        vtd_generate_interrupt(s);
+        vtd_generate_interrupt(s, DMAR_FEADDR_REG, DMAR_FEDATA_REG);
         set_clear_mask_long(s, DMAR_FECTL_REG, VTD_FECTL_IP, 0);
     }
 }
@@ -328,6 +337,31 @@ static void vtd_report_dmar_fault(IntelIOMMUState *s, uint16_t source_id,
     }
 }
 
+/* Set the IWC field and try to generate an invalidation completion interrupt */
+static void vtd_generate_completion_event(IntelIOMMUState *s)
+{
+    VTD_DPRINTF(INV, "completes an invalidation wait command with "
+                "Interrupt Flag");
+    if (get_long_raw(s, DMAR_ICS_REG) & VTD_ICS_IWC) {
+        VTD_DPRINTF(INV, "there is a previous interrupt condition to be "
+                    "serviced by software, "
+                    "new invalidation event is not generated");
+        return;
+    }
+
+    set_clear_mask_long(s, DMAR_ICS_REG, 0, VTD_ICS_IWC);
+    set_clear_mask_long(s, DMAR_IECTL_REG, 0, VTD_IECTL_IP);
+    if (get_long_raw(s, DMAR_IECTL_REG) & VTD_IECTL_IM) {
+        VTD_DPRINTF(INV, "IM filed in IECTL_REG is set, new invalidation "
+                    "event is not generated");
+        return;
+    } else {
+        /* Generate the interrupt event */
+        vtd_generate_interrupt(s, DMAR_IEADDR_REG, DMAR_IEDATA_REG);
+        set_clear_mask_long(s, DMAR_IECTL_REG, VTD_IECTL_IP, 0);
+    }
+
+}
 
 static inline bool root_entry_present(VTDRootEntry *root)
 {
@@ -791,6 +825,11 @@ static void handle_ccmd_write(IntelIOMMUState *s)
 
     /* Context-cache invalidation request */
     if (val & VTD_CCMD_ICC) {
+        if (s->qi_enabled) {
+            VTD_DPRINTF(GENERAL, "error: Queued Invalidation enabled, "
+                        "should not use register-based invalidation");
+            return;
+        }
         ret = vtd_context_cache_invalidate(s, val);
 
         /* Invalidation completed. Change something to show */
@@ -808,6 +847,11 @@ static void handle_iotlb_write(IntelIOMMUState *s)
 
     /* IOTLB invalidation request */
     if (val & VTD_TLB_IVT) {
+        if (s->qi_enabled) {
+            VTD_DPRINTF(GENERAL, "error: Queued Invalidation enabled, "
+                        "should not use register-based invalidation");
+            return;
+        }
         ret = vtd_iotlb_flush(s, val);
 
         /* Invalidation completed. Change something to show */
@@ -841,13 +885,13 @@ static bool get_inv_desc(dma_addr_t base_addr, uint16_t offset,
 
 static void vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
 {
-    assert(!(
-           (inv_desc->lo & VTD_INV_DESC_WAIT_SW) &&
-           (inv_desc->lo & VTD_INV_DESC_WAIT_IF)));
     if (inv_desc->lo & VTD_INV_DESC_WAIT_SW) {
         /* Status Write */
         uint32_t status_data = (uint32_t)(inv_desc->lo >>
                                VTD_INV_DESC_WAIT_DATA_SHIFT);
+
+        assert(!(inv_desc->lo & VTD_INV_DESC_WAIT_IF));
+
         /* FIXME: need to be masked with HAW? */
         dma_addr_t status_addr = inv_desc->hi;
         VTD_DPRINTF(INV, "status data 0x%x, status addr 0x%"PRIx64,
@@ -860,8 +904,8 @@ static void vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
         }
     } else if (inv_desc->lo & VTD_INV_DESC_WAIT_IF) {
         /* Interrupt flag */
-        /* FIXME: not implemented yet */
         VTD_DPRINTF(INV, "Invalidation Wait Descriptor interrupt completion");
+        vtd_generate_completion_event(s);
     } else {
         /* FIXME: fault reporting */
         VTD_DPRINTF(GENERAL, "error: Invalidation Wait Descriptor error");
@@ -913,9 +957,9 @@ static inline void handle_iqt_write(IntelIOMMUState *s)
     uint64_t val = get_quad_raw(s, DMAR_IQT_REG);
 
     s->iq_tail = VTD_IQT_QT(val);
-    VTD_DPRINTF(INV, "New iq tail %d", s->iq_tail);
+    VTD_DPRINTF(INV, "set iq tail %d", s->iq_tail);
 
-    if (s->qi_enabled) {
+    if (s->qi_enabled && !(get_long_raw(s, DMAR_FSTS_REG) & VTD_FSTS_IQE)) {
         /* Process Invalidation Queue here */
         while (s->iq_head != s->iq_tail) {
             vtd_process_inv_desc(s);
@@ -935,7 +979,7 @@ static inline void handle_fsts_write(IntelIOMMUState *s)
     if ((fectl_reg & VTD_FECTL_IP) && !(fsts_reg & status_fields)) {
         set_clear_mask_long(s, DMAR_FECTL_REG, VTD_FECTL_IP, 0);
         VTD_DPRINTF(FLOG, "all pending interrupt conditions serviced, clear "
-                    "IP field of FSTS_REG");
+                    "IP field of FECTL_REG");
     }
 }
 
@@ -948,10 +992,38 @@ static inline void handle_fectl_write(IntelIOMMUState *s)
      */
     fectl_reg = get_long_raw(s, DMAR_FECTL_REG);
     if ((fectl_reg & VTD_FECTL_IP) && !(fectl_reg & VTD_FECTL_IM)) {
-        vtd_generate_interrupt(s);
+        vtd_generate_interrupt(s, DMAR_FEADDR_REG, DMAR_FEDATA_REG);
         set_clear_mask_long(s, DMAR_FECTL_REG, VTD_FECTL_IP, 0);
         VTD_DPRINTF(FLOG, "IM field is cleared, generate "
                     "fault event interrupt");
+    }
+}
+
+static inline void handle_ics_write(IntelIOMMUState *s)
+{
+    uint32_t ics_reg = get_long_raw(s, DMAR_ICS_REG);
+    uint32_t iectl_reg = get_long_raw(s, DMAR_IECTL_REG);
+
+    if ((iectl_reg & VTD_IECTL_IP) && !(ics_reg & VTD_ICS_IWC)) {
+        set_clear_mask_long(s, DMAR_IECTL_REG, VTD_IECTL_IP, 0);
+        VTD_DPRINTF(INV, "pending completion interrupt condition serviced, "
+                    "clear IP field of IECTL_REG");
+    }
+}
+
+static inline void handle_iectl_write(IntelIOMMUState *s)
+{
+    uint32_t iectl_reg;
+    /* When software clears the IM field, check the IP field. But do we
+     * need to compare the old value and the new value to conclude that
+     * software clears the IM field? Or just check if the IM field is zero?
+     */
+    iectl_reg = get_long_raw(s, DMAR_IECTL_REG);
+    if ((iectl_reg & VTD_IECTL_IP) && !(iectl_reg & VTD_IECTL_IM)) {
+        vtd_generate_interrupt(s, DMAR_IEADDR_REG, DMAR_IEDATA_REG);
+        set_clear_mask_long(s, DMAR_IECTL_REG, VTD_IECTL_IP, 0);
+        VTD_DPRINTF(INV, "IM field is cleared, generate "
+                    "invalidation event interrupt");
     }
 }
 
@@ -1079,6 +1151,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_FSTS_REG:
         VTD_DPRINTF(FLOG, "DMAR_FSTS_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
         set_long(s, addr, val);
         handle_fsts_write(s);
         break;
@@ -1087,6 +1160,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_FECTL_REG:
         VTD_DPRINTF(FLOG, "DMAR_FECTL_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
         set_long(s, addr, val);
         handle_fectl_write(s);
         break;
@@ -1095,6 +1169,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_FEDATA_REG:
         VTD_DPRINTF(FLOG, "DMAR_FEDATA_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
         set_long(s, addr, val);
         break;
 
@@ -1102,6 +1177,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_FEADDR_REG:
         VTD_DPRINTF(FLOG, "DMAR_FEADDR_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
         set_long(s, addr, val);
         break;
 
@@ -1109,6 +1185,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_FEUADDR_REG:
         VTD_DPRINTF(FLOG, "DMAR_FEUADDR_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
         set_long(s, addr, val);
         break;
 
@@ -1116,6 +1193,7 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
     case DMAR_PMEN_REG:
         VTD_DPRINTF(CSR, "DMAR_PMEN_REG write addr 0x%"PRIx64
                     ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
         set_long(s, addr, val);
         break;
 
@@ -1175,6 +1253,49 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         assert(size == 4);
         set_long(s, addr, val);
         break;
+
+    /* Invalidation Completion Status Register, 32-bit */
+    case DMAR_ICS_REG:
+        VTD_DPRINTF(INV, "DMAR_ICS_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
+        set_long(s, addr, val);
+        handle_ics_write(s);
+        break;
+
+    /* Invalidation Event Control Register, 32-bit */
+    case DMAR_IECTL_REG:
+        VTD_DPRINTF(INV, "DMAR_IECTL_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
+        set_long(s, addr, val);
+        handle_iectl_write(s);
+        break;
+
+    /* Invalidation Event Data Register, 32-bit */
+    case DMAR_IEDATA_REG:
+        VTD_DPRINTF(INV, "DMAR_IEDATA_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
+        set_long(s, addr, val);
+        break;
+
+    /* Invalidation Event Address Register, 32-bit */
+    case DMAR_IEADDR_REG:
+        VTD_DPRINTF(INV, "DMAR_IEADDR_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
+        set_long(s, addr, val);
+        break;
+
+    /* Invalidation Event Upper Address Register, 32-bit */
+    case DMAR_IEUADDR_REG:
+        VTD_DPRINTF(INV, "DMAR_IEUADDR_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
+        set_long(s, addr, val);
+        break;
+
 
     /* Fault Recording Registers, 128-bit */
     case DMAR_FRCD_REG_0_0:
@@ -1384,7 +1505,10 @@ static void do_vtd_init(IntelIOMMUState *s)
 
     define_long(s, DMAR_IEDATA_REG, 0, 0xffffffffUL, 0);
     define_long(s, DMAR_IEADDR_REG, 0, 0xfffffffcUL, 0);
-    define_long(s, DMAR_IEUADDR_REG, 0, 0xffffffffUL, 0);
+
+    /* Treadted as RsvdZ when EIM in ECAP_REG is not supported */
+    define_long(s, DMAR_IEUADDR_REG, 0, 0, 0);
+
     define_quad(s, DMAR_IRTA_REG, 0, 0xfffffffffffff80fULL, 0);
     define_quad(s, DMAR_PQH_REG, 0, 0x7fff0ULL, 0);
     define_quad(s, DMAR_PQT_REG, 0, 0x7fff0ULL, 0);

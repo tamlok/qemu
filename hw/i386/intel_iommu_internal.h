@@ -30,9 +30,8 @@
 #include "hw/i386/intel_iommu.h"
 
 /*
- * Intel IOMMU register specification per version 1.0 public spec.
+ * Intel IOMMU register specification
  */
-
 #define DMAR_VER_REG    0x0 /* Arch version supported by this IOMMU */
 #define DMAR_CAP_REG    0x8 /* Hardware supported capabilities */
 #define DMAR_CAP_REG_HI 0xc /* High 32-bit of DMAR_CAP_REG */
@@ -69,7 +68,6 @@
 #define DMAR_IRTA_REG   0xb8    /* Interrupt remapping table addr register */
 #define DMAR_IRTA_REG_HI    0xbc
 
-/* From Vt-d 2.2 spec */
 #define DMAR_IECTL_REG  0xa0    /* Invalidation event control register */
 #define DMAR_IEDATA_REG 0xa4    /* Invalidation event data register */
 #define DMAR_IEADDR_REG 0xa8    /* Invalidation event address register */
@@ -102,7 +100,7 @@
 #define DMAR_FRCD_REG_OFFSET 0x220 /* Offset to the Fault Recording Registers */
 #define DMAR_FRCD_REG_NR 1ULL /* Num of Fault Recording Registers */
 
-/* If you change the DMAR_FRCD_REG_NR, please remember to change the
+/* NOTICE: If you change the DMAR_FRCD_REG_NR, please remember to change the
  * DMAR_REG_SIZE in include/hw/i386/intel_iommu.h.
  * #define DMAR_REG_SIZE   (DMAR_FRCD_REG_OFFSET + 16 * DMAR_FRCD_REG_NR)
  */
@@ -200,6 +198,13 @@
 /* IQH_REG */
 #define VTD_IQH_QH_SHIFT    (4)
 #define VTD_IQH_QH_MASK     (0x7fff0ULL)
+
+/* ICS_REG */
+#define VTD_ICS_IWC         (1UL)
+
+/* IECTL_REG */
+#define VTD_IECTL_IM        (1UL << 31)
+#define VTD_IECTL_IP        (1UL << 30)
 
 /* FSTS_REG */
 #define VTD_FSTS_FRI_MASK  (0xff00)
