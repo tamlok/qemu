@@ -168,7 +168,7 @@
 
 /* RTADDR_REG */
 #define VTD_RTADDR_RTT (1ULL << 11)
-#define VTD_RTADDR_ADDR_MASK (((1ULL << VTD_HOST_ADDRESS_WIDTH) - 1) ^ 0xfffULL)
+#define VTD_RTADDR_ADDR_MASK (VTD_HAW_MASK ^ 0xfffULL)
 
 /* ECAP_REG */
 #define VTD_ECAP_IRO (DMAR_IOTLB_REG_OFFSET << 4)  /* (val >> 4) << 8 */
@@ -183,16 +183,21 @@
 #define VTD_CAP_ND  (((VTD_DOMAIN_ID_SHIFT - 4) / 2) & 7ULL)
 #define VTD_MGAW    39  /* Maximum Guest Address Width */
 #define VTD_CAP_MGAW    (((VTD_MGAW - 1) & 0x3fULL) << 16)
+
 /* Supported Adjusted Guest Address Widths */
-#define VTD_CAP_SAGAW_MASK  (0x1fULL << 8)
-#define VTD_CAP_SAGAW_39bit (0x2ULL << 8)  /* 39-bit AGAW, 3-level page-table */
-#define VTD_CAP_SAGAW_48bit (0x4ULL << 8)  /* 48-bit AGAW, 4-level page-table */
+#define VTD_CAP_SAGAW_SHIFT (8)
+#define VTD_CAP_SAGAW_MASK  (0x1fULL << VTD_CAP_SAGAW_SHIFT)
+ /* 39-bit AGAW, 3-level page-table */
+#define VTD_CAP_SAGAW_39bit (0x2ULL << VTD_CAP_SAGAW_SHIFT)
+ /* 48-bit AGAW, 4-level page-table */
+#define VTD_CAP_SAGAW_48bit (0x4ULL << VTD_CAP_SAGAW_SHIFT)
+#define VTD_CAP_SAGAW       VTD_CAP_SAGAW_39bit
 
 /* IQT_REG */
 #define VTD_IQT_QT(val)     (((val) >> 4) & 0x7fffULL)
 
 /* IQA_REG */
-#define VTD_IQA_IQA_MASK    (((1ULL << VTD_HOST_ADDRESS_WIDTH) - 1) ^ 0xfffULL)
+#define VTD_IQA_IQA_MASK    (VTD_HAW_MASK ^ 0xfffULL)
 #define VTD_IQA_QS          (0x7ULL)
 
 /* IQH_REG */
@@ -315,7 +320,7 @@ typedef struct VTDRootEntry VTDRootEntry;
 #define VTD_ROOT_ENTRY_CTP  (~0xfffULL)
 
 #define VTD_ROOT_ENTRY_NR   (VTD_PAGE_SIZE / sizeof(VTDRootEntry))
-
+#define VTD_ROOT_ENTRY_RSVD (0xffeULL | ~VTD_HAW_MASK)
 
 /* Context-Entry */
 struct VTDContextEntry {
@@ -334,11 +339,11 @@ typedef struct VTDContextEntry VTDContextEntry;
 #define VTD_CONTEXT_TT_PASS_THROUGH (2)
 /* Second Level Page Translation Pointer*/
 #define VTD_CONTEXT_ENTRY_SLPTPTR   (~0xfffULL)
-
+#define VTD_CONTEXT_ENTRY_RSVD_LO   (0xff0ULL | ~VTD_HAW_MASK)
 /* hi */
 #define VTD_CONTEXT_ENTRY_AW    (7ULL) /* Adjusted guest-address-width */
 #define VTD_CONTEXT_ENTRY_DID   (0xffffULL << 8)    /* Domain Identifier */
-
+#define VTD_CONTEXT_ENTRY_RSVD_HI   (0xffffffffff000080ULL)
 
 #define VTD_CONTEXT_ENTRY_NR    (VTD_PAGE_SIZE / sizeof(VTDContextEntry))
 
@@ -348,13 +353,17 @@ typedef struct VTDContextEntry VTDContextEntry;
 #define VTD_SL_LEVEL_BITS   9   /* Bits to decide the offset for each level */
 
 /* Second Level Paging Structure */
-#define VTD_SL_PML4_LEVEL 4
-#define VTD_SL_PDP_LEVEL 3
-#define VTD_SL_PD_LEVEL 2
-#define VTD_SL_PT_LEVEL 1
-
+#define VTD_SL_PML4_LEVEL   4
+#define VTD_SL_PDP_LEVEL    3
+#define VTD_SL_PD_LEVEL     2
+#define VTD_SL_PT_LEVEL     1
 #define VTD_SL_PT_ENTRY_NR  512
-#define VTD_SL_PT_BASE_ADDR_MASK  (~(VTD_PAGE_SIZE - 1))
 
+/* Masks for Second Level Paging Entry */
+#define VTD_SL_RW_MASK              (3ULL)
+#define VTD_SL_R                    (1ULL)
+#define VTD_SL_W                    (1ULL << 1)
+#define VTD_SL_PT_BASE_ADDR_MASK    (~(VTD_PAGE_SIZE - 1) & VTD_HAW_MASK)
+#define VTD_SL_IGN_COM    (0xbff0000000000000ULL)
 
 #endif

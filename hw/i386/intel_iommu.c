@@ -388,7 +388,6 @@ static int get_root_entry(IntelIOMMUState *s, int index, VTDRootEntry *re)
     addr = s->root + index * sizeof(*re);
 
     if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
-        /* FIXME: fault reporting */
         VTD_DPRINTF(GENERAL, "error: fail to access root-entry at 0x%"PRIx64
                     " + %d", s->root, index);
         re->val = 0;
@@ -421,7 +420,6 @@ static int get_context_entry_from_root(VTDRootEntry *root, int index,
     addr = (root->val & VTD_ROOT_ENTRY_CTP) + index * sizeof(*ce);
 
     if (dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce))) {
-        /* FIXME: fault reporting */
         VTD_DPRINTF(GENERAL, "error: fail to access context-entry at 0x%"PRIx64
                     " + %d", (uint64_t)(root->val & VTD_ROOT_ENTRY_CTP), index);
         ce->lo = 0;
@@ -447,7 +445,7 @@ static inline int slpt_level_shift(int level)
 
 static inline bool slpte_present(uint64_t slpte)
 {
-    return slpte & 3;
+    return slpte & VTD_SL_RW_MASK;
 }
 
 /* Calculate the GPA given the base address, the index in the page table and
@@ -463,22 +461,10 @@ static inline uint64_t get_slpte_addr(uint64_t slpte)
     return slpte & VTD_SL_PT_BASE_ADDR_MASK;
 }
 
-/* Whether the pte points to a large page */
-static inline bool is_large_pte(uint64_t pte)
-{
-    return pte & VTD_SL_PT_PAGE_SIZE_MASK;
-}
-
 /* Whether the pte indicates the address of the page frame */
 static inline bool is_last_slpte(uint64_t slpte, int level)
 {
-    if (level == VTD_SL_PT_LEVEL) {
-        return true;
-    }
-    if (is_large_pte(slpte)) {
-        return true;
-    }
-    return false;
+    return level == VTD_SL_PT_LEVEL || (slpte & VTD_SL_PT_PAGE_SIZE_MASK);
 }
 
 /* Get the content of a spte located in @base_addr[@index] */
@@ -491,7 +477,6 @@ static inline uint64_t get_slpte(dma_addr_t base_addr, int index)
     if (dma_memory_read(&address_space_memory,
                         base_addr + index * sizeof(slpte), &slpte,
                         sizeof(slpte))) {
-        /* FIXME: fault reporting */
         slpte = (uint64_t)-1;
         return slpte;
     }
@@ -508,6 +493,13 @@ static inline int gpa_level_offset(uint64_t gpa, int level)
     return (gpa >> slpt_level_shift(level)) & ((1ULL << VTD_SL_LEVEL_BITS) - 1);
 }
 
+/* Check Capability Register to see if the @level of page-table is supported */
+static inline bool is_level_supported(IntelIOMMUState *s, uint32_t level)
+{
+    return VTD_CAP_SAGAW_MASK & s->cap &
+           (1ULL << (level - 2 + VTD_CAP_SAGAW_SHIFT));
+}
+
 /* Get the page-table level that hardware should use for the second-level
  * page-table walk from the Address Width field of context-entry.
  */
@@ -516,18 +508,59 @@ static inline int get_level_from_context_entry(VTDContextEntry *ce)
     return 2 + (ce->hi & VTD_CONTEXT_ENTRY_AW);
 }
 
+static inline int get_agaw_from_context_entry(VTDContextEntry *ce)
+{
+    return 30 + (ce->hi & VTD_CONTEXT_ENTRY_AW) * 9;
+}
+
+static const uint64_t paging_entry_rsvd_field[] = {
+    [0] = ~0ULL,
+    /* For not large page */
+    [1] = 0x800ULL | ~(VTD_HAW_MASK | VTD_SL_IGN_COM),
+    [2] = 0x800ULL | ~(VTD_HAW_MASK | VTD_SL_IGN_COM),
+    [3] = 0x800ULL | ~(VTD_HAW_MASK | VTD_SL_IGN_COM),
+    [4] = 0x880ULL | ~(VTD_HAW_MASK | VTD_SL_IGN_COM),
+    /* For large page */
+    [5] = 0x800ULL | ~(VTD_HAW_MASK | VTD_SL_IGN_COM),
+    [6] = 0x1ff800ULL | ~(VTD_HAW_MASK | VTD_SL_IGN_COM),
+    [7] = 0x3ffff800ULL | ~(VTD_HAW_MASK | VTD_SL_IGN_COM),
+    [8] = 0x880ULL | ~(VTD_HAW_MASK | VTD_SL_IGN_COM),
+};
+
+static inline bool slpte_nonzero_rsvd(uint64_t slpte, int level)
+{
+    if (slpte & VTD_SL_PT_PAGE_SIZE_MASK) {
+        /* Maybe large page */
+        return slpte & paging_entry_rsvd_field[level + 4];
+    } else {
+        return slpte & paging_entry_rsvd_field[level];
+    }
+}
+
 /* Given the @gpa, get relevant @slptep. @slpte_level will be the last level
  * of the translation, can be used for deciding the size of large page.
+ * @slptep and @slpte_level will not be touched if error happens.
  */
-static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
+static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa, bool is_write,
                         uint64_t *slptep, int *slpte_level)
 {
     dma_addr_t addr = get_slpt_base_from_context(ce);
     int level = get_level_from_context_entry(ce);
-    int highest_level = level;
     int offset;
-    int ret_fr;
     uint64_t slpte;
+    int ce_agaw = get_agaw_from_context_entry(ce);
+    uint64_t access_right_check;
+
+    /* Check if @gpa is above 2^X-1, where X is the minimum of MGAW in CAP_REG
+     * and AW in context-entry.
+     */
+    if (gpa & ~((1ULL << MIN(ce_agaw, VTD_MGAW)) - 1)) {
+        VTD_DPRINTF(GENERAL, "error: gpa 0x%"PRIx64 " exceeds limits", gpa);
+        return -VTD_FR_ADDR_BEYOND_MGAW;
+    }
+
+    /* FIXME: what is the Atomics request here? */
+    access_right_check = is_write ? VTD_SL_W : VTD_SL_R;
 
     while (true) {
         offset = gpa_level_offset(gpa, level);
@@ -537,27 +570,39 @@ static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
             VTD_DPRINTF(GENERAL, "error: fail to access second-level paging "
                         "entry at level %d for gpa 0x%"PRIx64,
                         level, gpa);
-            *slpte_level = level;
-            *slptep = 0;
-            if (highest_level == level) {
-                ret_fr = -VTD_FR_RESERVED_ERR;
+            if (level == get_level_from_context_entry(ce)) {
+                /* Invalid programming of context-entry */
+                return -VTD_FR_CONTEXT_ENTRY_INV;
             } else {
-                ret_fr = -VTD_FR_PAGING_ENTRY_INV;
+                return -VTD_FR_PAGING_ENTRY_INV;
             }
-            return ret_fr;
         }
         if (!slpte_present(slpte)) {
+            /* FIXME: the specification seems not to state the fault reason
+             * in this case. Just return VTD_FR_RESERVED_ERR to indicate an
+             * error. It will not be reported to software.
+             */
             VTD_DPRINTF(GENERAL, "error: level %d slpte 0x%"PRIx64
                         " for gpa 0x%"PRIx64 " is not present",
                         level, slpte, gpa);
-            *slptep = 0;
-            *slpte_level = level;
-            ret_fr = -VTD_FR_RESERVED_ERR;
-            return ret_fr;
+            return -VTD_FR_RESERVED_ERR;
+        } else if (!(slpte & access_right_check)) {
+            VTD_DPRINTF(GENERAL, "error: lack of %s permission for "
+                        "gpa 0x%"PRIx64 " slpte 0x%"PRIx64,
+                        (is_write ? "write" : "read"), gpa, slpte);
+            return is_write ? -VTD_FR_WRITE : -VTD_FR_READ;
         }
+
+        if (slpte_nonzero_rsvd(slpte, level)) {
+            VTD_DPRINTF(GENERAL, "error: non-zero reserved field in second "
+                        "level paging entry level %d slpte 0x%"PRIx64,
+                        level, slpte);
+            return -VTD_FR_PAGING_ENTRY_RSVD;
+        }
+
         if (is_last_slpte(slpte, level)) {
-            *slpte_level = level;
             *slptep = slpte;
+            *slpte_level = level;
             return VTD_FR_RESERVED;
         }
         addr = get_slpte_addr(slpte);
@@ -565,7 +610,9 @@ static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa,
     }
 }
 
-/* Map a device to its corresponding domain (context_entry) */
+/* Map a device to its corresponding domain (context-entry). @ce will be set
+ * to Zero if error happens while accessing the context-entry.
+ */
 static inline int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
                                         int devfn, VTDContextEntry *ce)
 {
@@ -577,28 +624,53 @@ static inline int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
 
     ret_fr = get_root_entry(s, bus_num, &re);
     if (ret_fr) {
-        /* FIXME: fault reporting */
+        ce->hi = 0;
+        ce->lo = 0;
         return ret_fr;
     }
 
     if (!root_entry_present(&re)) {
-        /* FIXME: fault reporting */
         VTD_DPRINTF(GENERAL, "error: root-entry #%d is not present", bus_num);
+        ce->hi = 0;
+        ce->lo = 0;
         return -VTD_FR_ROOT_ENTRY_P;
+    } else if (re.rsvd || (re.val & VTD_ROOT_ENTRY_RSVD)) {
+        VTD_DPRINTF(GENERAL, "error: non-zero reserved field in root-entry "
+                    "hi 0x%"PRIx64 " lo 0x%"PRIx64, re.rsvd, re.val);
+        ce->hi = 0;
+        ce->lo = 0;
+        return -VTD_FR_ROOT_ENTRY_RSVD;
     }
 
     ret_fr = get_context_entry_from_root(&re, devfn, ce);
     if (ret_fr) {
-        /* FIXME: fault reporting */
         return ret_fr;
     }
 
     if (!context_entry_present(ce)) {
-        /* FIXME: fault reporting */
         VTD_DPRINTF(GENERAL,
                     "error: context-entry #%d(bus #%d) is not present", devfn,
                     bus_num);
         return -VTD_FR_CONTEXT_ENTRY_P;
+    } else if ((ce->hi & VTD_CONTEXT_ENTRY_RSVD_HI) ||
+               (ce->lo & VTD_CONTEXT_ENTRY_RSVD_LO)) {
+        VTD_DPRINTF(GENERAL,
+                    "error: non-zero reserved field in context-entry "
+                    "hi 0x%"PRIx64 " lo 0x%"PRIx64, ce->hi, ce->lo);
+        return -VTD_FR_CONTEXT_ENTRY_RSVD;
+    }
+
+    /* Check if the programming of context-entry is valid */
+    if (!is_level_supported(s, get_level_from_context_entry(ce))) {
+        VTD_DPRINTF(GENERAL, "error: unsupported Address Width value in "
+                    "context-entry hi 0x%"PRIx64 " lo 0x%"PRIx64,
+                    ce->hi, ce->lo);
+        return -VTD_FR_CONTEXT_ENTRY_INV;
+    } else if (ce->lo & VTD_CONTEXT_ENTRY_TT) {
+        VTD_DPRINTF(GENERAL, "error: unsupported Translation Type in "
+                    "context-entry hi 0x%"PRIx64 " lo 0x%"PRIx64,
+                    ce->hi, ce->lo);
+        return -VTD_FR_CONTEXT_ENTRY_INV;
     }
 
     return VTD_FR_RESERVED;
@@ -608,6 +680,35 @@ static inline uint16_t make_source_id(int bus_num, int devfn)
 {
     return ((bus_num & 0xffUL) << 8) | (devfn & 0xffUL);
 }
+
+static const bool qualified_faults[] = {
+    [VTD_FR_RESERVED] = false,
+    [VTD_FR_ROOT_ENTRY_P] = false,
+    [VTD_FR_CONTEXT_ENTRY_P] = true,
+    [VTD_FR_CONTEXT_ENTRY_INV] = true,
+    [VTD_FR_ADDR_BEYOND_MGAW] = true,
+    [VTD_FR_WRITE] = true,
+    [VTD_FR_READ] = true,
+    [VTD_FR_PAGING_ENTRY_INV] = true,
+    [VTD_FR_ROOT_TABLE_INV] = false,
+    [VTD_FR_CONTEXT_TABLE_INV] = false,
+    [VTD_FR_ROOT_ENTRY_RSVD] = false,
+    [VTD_FR_PAGING_ENTRY_RSVD] = true,
+    [VTD_FR_CONTEXT_ENTRY_TT] = true,
+    [VTD_FR_RESERVED_ERR] = false,
+    [VTD_FR_MAX] = false,
+};
+
+/* To see if a fault condition is "qualified", which is reported to software
+ * only if the FPD field in the context-entry used to process the faulting
+ * request is 0.
+ */
+static inline bool is_qualified_fault(VTDFaultReason fault)
+{
+    assert(fault >= 0 && fault < VTD_FR_MAX);
+    return qualified_faults[fault];
+}
+
 /* Map dev to context-entry then do a paging-structures walk to do a iommu
  * translation.
  * @bus_num: The bus number
@@ -621,36 +722,51 @@ static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
     VTDContextEntry ce;
     uint64_t slpte;
     int level;
-    uint64_t page_mask = VTD_PAGE_MASK_4K;
+    uint64_t page_mask;
     uint16_t source_id = make_source_id(bus_num, devfn);
     int ret_fr;
+    bool is_fpd_set = false;
 
     ret_fr = dev_to_context_entry(s, bus_num, devfn, &ce);
+    is_fpd_set = ce.lo & VTD_CONTEXT_ENTRY_FPD;
     if (ret_fr) {
-        vtd_report_dmar_fault(s, source_id, addr, -ret_fr, is_write);
-        return;
-    }
-
-    ret_fr = gpa_to_slpte(&ce, addr, &slpte, &level);
-    if (ret_fr) {
-        vtd_report_dmar_fault(s, source_id, addr, -ret_fr, is_write);
-        return;
-    }
-
-    if (is_large_pte(slpte)) {
-        if (level == VTD_SL_PDP_LEVEL) {
-            /* 1-GB page */
-            page_mask = VTD_PAGE_MASK_1G;
+        ret_fr = -ret_fr;
+        if (is_fpd_set && is_qualified_fault(ret_fr)) {
+            VTD_DPRINTF(FLOG, "fault processing is disabled for DMA requests "
+                        "through this context-entry (with FPD Set)");
         } else {
-            /* 2-MB page */
-            page_mask = VTD_PAGE_MASK_2M;
+            vtd_report_dmar_fault(s, source_id, addr, ret_fr, is_write);
         }
+        return;
+    }
+
+    ret_fr = gpa_to_slpte(&ce, addr, is_write, &slpte, &level);
+    if (ret_fr) {
+        ret_fr = -ret_fr;
+        if (is_fpd_set && is_qualified_fault(ret_fr)) {
+            VTD_DPRINTF(FLOG, "fault processing is disabled for DMA requests "
+                        "through this context-entry (with FPD Set)");
+        } else {
+            vtd_report_dmar_fault(s, source_id, addr, ret_fr, is_write);
+        }
+        return;
+    }
+
+    if (level == VTD_SL_PT_LEVEL) {
+        /* 4-KB page */
+        page_mask = VTD_PAGE_MASK_4K;
+    } else if (level == VTD_SL_PDP_LEVEL) {
+        /* 1-GB page */
+        page_mask = VTD_PAGE_MASK_1G;
+    } else {
+        /* 2-MB page */
+        page_mask = VTD_PAGE_MASK_2M;
     }
 
     entry->iova = addr & page_mask;
     entry->translated_addr = get_slpte_addr(slpte) & page_mask;
     entry->addr_mask = ~page_mask;
-    entry->perm = IOMMU_RW;
+    entry->perm = slpte & VTD_SL_RW_MASK;
 }
 
 static void vtd_root_table_setup(IntelIOMMUState *s)
@@ -1487,9 +1603,8 @@ static void do_vtd_init(IntelIOMMUState *s)
      * b.54 = 0: DWD(Write Draining), draining of write requests not supported
      * b.55 = 0: DRD(Read Draining), draining of read requests not supported
      */
-    const uint64_t dmar_cap_reg_value = VTD_CAP_FRO | VTD_CAP_NFR |
-                                        VTD_CAP_ND | VTD_CAP_MGAW |
-                                        VTD_CAP_SAGAW_39bit;
+    s->cap = VTD_CAP_FRO | VTD_CAP_NFR | VTD_CAP_ND | VTD_CAP_MGAW |
+             VTD_CAP_SAGAW;
 
     /* b.1 = 1: QI(Queued Invalidation support) supported
      * b.2 = 0: DT(Device-TLB support) not supported
@@ -1498,12 +1613,12 @@ static void do_vtd_init(IntelIOMMUState *s)
      * b.8:17 = 15: IRO(IOTLB Register Offset)
      * b.20:23 = 0: MHMV(Maximum Handle Mask Value) not valid
      */
-    const uint64_t dmar_ecap_reg_value = VTD_ECAP_QI | VTD_ECAP_IRO;
+    s->ecap = VTD_ECAP_QI | VTD_ECAP_IRO;
 
     /* Define registers with default values and bit semantics */
     define_long(s, DMAR_VER_REG, 0x10UL, 0, 0);  /* set MAX = 1, RO */
-    define_quad(s, DMAR_CAP_REG, dmar_cap_reg_value, 0, 0);
-    define_quad(s, DMAR_ECAP_REG, dmar_ecap_reg_value, 0, 0);
+    define_quad(s, DMAR_CAP_REG, s->cap, 0, 0);
+    define_quad(s, DMAR_ECAP_REG, s->ecap, 0, 0);
     define_long(s, DMAR_GCMD_REG, 0, 0xff800000UL, 0);
     define_long_wo(s, DMAR_GCMD_REG, 0xff800000UL);
     define_long(s, DMAR_GSTS_REG, 0, 0, 0); /* All bits RO, default 0 */

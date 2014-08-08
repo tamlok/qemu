@@ -41,6 +41,7 @@
 
 /* FIXME: do not know how to decide the haw */
 #define VTD_HOST_ADDRESS_WIDTH  39
+#define VTD_HAW_MASK    ((1ULL << VTD_HOST_ADDRESS_WIDTH) - 1)
 
 typedef struct IntelIOMMUState IntelIOMMUState;
 typedef struct VTDAddressSpace VTDAddressSpace;
@@ -78,6 +79,9 @@ struct IntelIOMMUState {
      * Wraps around from N-1 to 0, where N is the number of FRCD_REG.
      */
     uint16_t next_frcd_reg;
+
+    uint64_t cap;           /* The value of Capability Register */
+    uint64_t ecap;          /* The value of Extended Capability Register */
 
     MemoryRegionIOMMUOps iommu_ops;
     VTDAddressSpace **address_spaces[VTD_PCI_BUS_MAX];
