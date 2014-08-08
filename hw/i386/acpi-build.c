@@ -1325,7 +1325,7 @@ build_dmar_q35(GArray *table_data, GArray *linker)
     AcpiDmarHardwareUnit *drhd;
 
     dmar = acpi_data_push(table_data, sizeof(*dmar));
-    dmar->host_address_width = VTD_HOST_ADDRESS_WIDTH;
+    dmar->host_address_width = VTD_HOST_ADDRESS_WIDTH - 1;
     dmar->flags = 0;    /* No intr_remap for now */
 
     /* DMAR Remapping Hardware Unit Definition structure */
