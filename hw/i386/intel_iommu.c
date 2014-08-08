@@ -917,7 +917,8 @@ static inline void handle_iqt_write(IntelIOMMUState *s)
             vtd_process_inv_desc(s);
         }
         set_quad_raw(s, DMAR_IQH_REG,
-                     (s->iq_head << VTD_IQH_QH_SHIFT) & VTD_IQH_QH_MASK);
+                     (((uint64_t)(s->iq_head)) << VTD_IQH_QH_SHIFT) &
+                     VTD_IQH_QH_MASK);
     }
 }
 
