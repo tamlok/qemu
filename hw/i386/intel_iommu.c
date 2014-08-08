@@ -152,16 +152,16 @@ static void vtd_generate_interrupt(IntelIOMMUState *s)
 
 /* Generate a fault event to software via MSI if conditions are met.
  * Notice that the value of FSTS_REG being passed to it should be the one
- * before update.
+ * before any update.
  */
-static void vtd_generate_fault_event(IntelIOMMUState *s, uint32_t ori_fsts)
+static void vtd_generate_fault_event(IntelIOMMUState *s, uint32_t pre_fsts)
 {
     /* Check if there are any previously reported interrupt conditions */
-    if (ori_fsts & VTD_FSTS_PPF || ori_fsts & VTD_FSTS_PFO ||
-        ori_fsts & VTD_FSTS_IQE) {
+    if (pre_fsts & VTD_FSTS_PPF || pre_fsts & VTD_FSTS_PFO ||
+        pre_fsts & VTD_FSTS_IQE) {
         VTD_DPRINTF(FLOG, "there are previous interrupt conditions "
                     "to be serviced by software, fault event is not generated "
-                    "(FSTS_REG 0x%"PRIx32 ")", ori_fsts);
+                    "(FSTS_REG 0x%"PRIx32 ")", pre_fsts);
         return;
     }
     set_clear_mask_long(s, DMAR_FECTL_REG, 0, VTD_FECTL_IP);
@@ -208,7 +208,7 @@ static inline void update_fsts_ppf(IntelIOMMUState *s)
     VTD_DPRINTF(FLOG, "set PPF of FSTS_REG to %d", ppf_mask ? 1 : 0);
 }
 
-static inline void frcd_set_f(IntelIOMMUState *s, uint16_t index)
+static inline void set_frcd_and_update_ppf(IntelIOMMUState *s, uint16_t index)
 {
     /* Each reg is 128-bit */
     hwaddr addr = DMAR_FRCD_REG_OFFSET + (((uint64_t)index) << 4);
@@ -307,7 +307,7 @@ static void vtd_report_dmar_fault(IntelIOMMUState *s, uint16_t source_id,
         /* There are already one or more pending faults */
         VTD_DPRINTF(FLOG, "there are pending faults already, "
                     "fault event is not generated");
-        frcd_set_f(s, s->next_frcd_reg);
+        set_frcd_and_update_ppf(s, s->next_frcd_reg);
         s->next_frcd_reg++;
         if (s->next_frcd_reg == DMAR_FRCD_REG_NR) {
             s->next_frcd_reg = 0;
@@ -315,13 +315,13 @@ static void vtd_report_dmar_fault(IntelIOMMUState *s, uint16_t source_id,
     } else {
         set_clear_mask_long(s, DMAR_FSTS_REG, VTD_FSTS_FRI_MASK,
                             VTD_FSTS_FRI(s->next_frcd_reg));
-        frcd_set_f(s, s->next_frcd_reg); /* It will also set PPF */
+        set_frcd_and_update_ppf(s, s->next_frcd_reg); /* It will also set PPF */
         s->next_frcd_reg++;
         if (s->next_frcd_reg == DMAR_FRCD_REG_NR) {
             s->next_frcd_reg = 0;
         }
 
-        /* This case actually cause the PPF to be Set (in frcd_set_f).
+        /* This case actually cause the PPF to be Set.
          * So generate fault event (interrupt).
          */
          vtd_generate_fault_event(s, fsts_reg);
