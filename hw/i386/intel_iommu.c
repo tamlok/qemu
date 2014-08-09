@@ -1490,7 +1490,8 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
 
 }
 
-static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
+static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr,
+                                         bool is_write)
 {
     VTDAddressSpace *vtd_as = container_of(iommu, VTDAddressSpace, iommu);
     IntelIOMMUState *s = vtd_as->iommu_state;
@@ -1513,7 +1514,7 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr)
         return ret;
     }
 
-    iommu_translate(s, bus_num, devfn, addr, false, &ret);
+    iommu_translate(s, bus_num, devfn, addr, is_write, &ret);
 
     VTD_DPRINTF(MMU,
                 "bus %d slot %d func %d devfn %d gpa %"PRIx64 " hpa %"PRIx64,
