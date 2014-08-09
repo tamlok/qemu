@@ -98,12 +98,11 @@
 
 /* FRCD */
 #define DMAR_FRCD_REG_OFFSET 0x220 /* Offset to the Fault Recording Registers */
-#define DMAR_FRCD_REG_NR 1ULL /* Num of Fault Recording Registers */
-
 /* NOTICE: If you change the DMAR_FRCD_REG_NR, please remember to change the
  * DMAR_REG_SIZE in include/hw/i386/intel_iommu.h.
  * #define DMAR_REG_SIZE   (DMAR_FRCD_REG_OFFSET + 16 * DMAR_FRCD_REG_NR)
  */
+#define DMAR_FRCD_REG_NR 1ULL /* Num of Fault Recording Registers */
 
 #define DMAR_FRCD_REG_0_0    0x220 /* The 0th Fault Recording Register */
 #define DMAR_FRCD_REG_0_1    0x224
@@ -119,12 +118,7 @@
 #define VTD_TLB_DSI_FLUSH_A (2ULL << 57)
 #define VTD_TLB_PSI_FLUSH_A (3ULL << 57)
 #define VTD_TLB_FLUSH_GRANU_MASK_A (3ULL << 57)
-#define VTD_TLB_READ_DRAIN (1ULL << 49)
-#define VTD_TLB_WRITE_DRAIN (1ULL << 48)
-#define VTD_TLB_DID(id) (((uint64_t)((id) & 0xffffULL)) << 32)
 #define VTD_TLB_IVT (1ULL << 63)
-#define VTD_TLB_IH_NONLEAF (1ULL << 6)
-#define VTD_TLB_MAX_SIZE (0x3f)
 
 /* GCMD_REG */
 #define VTD_GCMD_TE (1UL << 31)
@@ -158,27 +152,18 @@
 #define VTD_CCMD_DOMAIN_INVL_A (2ULL << 59)
 #define VTD_CCMD_DEVICE_INVL_A (3ULL << 59)
 #define VTD_CCMD_CAIG_MASK (3ULL << 59)
-#define VTD_CCMD_FM(m) (((uint64_t)((m) & 3ULL)) << 32)
-#define VTD_CCMD_MASK_NOBIT 0
-#define VTD_CCMD_MASK_1BIT 1
-#define VTD_CCMD_MASK_2BIT 2
-#define VTD_CCMD_MASK_3BIT 3
-#define VTD_CCMD_SID(s) (((uint64_t)((s) & 0xffffULL)) << 16)
-#define VTD_CCMD_DID(d) ((uint64_t)((d) & 0xffffULL))
 
 /* RTADDR_REG */
 #define VTD_RTADDR_RTT (1ULL << 11)
 #define VTD_RTADDR_ADDR_MASK (VTD_HAW_MASK ^ 0xfffULL)
 
 /* ECAP_REG */
-#define VTD_ECAP_IRO (DMAR_IOTLB_REG_OFFSET << 4)  /* (val >> 4) << 8 */
+#define VTD_ECAP_IRO (DMAR_IOTLB_REG_OFFSET << 4)  /* (offset >> 4) << 8 */
 #define VTD_ECAP_QI  (1ULL << 1)
 
 /* CAP_REG */
-/* (val >> 4) << 24 */
-#define VTD_CAP_FRO     (DMAR_FRCD_REG_OFFSET << 20)
-
-#define VTD_CAP_NFR     ((DMAR_FRCD_REG_NR - 1) << 40)
+#define VTD_CAP_FRO  (DMAR_FRCD_REG_OFFSET << 20) /* (offset >> 4) << 24 */
+#define VTD_CAP_NFR  ((DMAR_FRCD_REG_NR - 1) << 40)
 #define VTD_DOMAIN_ID_SHIFT     16  /* 16-bit domain id for 64K domains */
 #define VTD_CAP_ND  (((VTD_DOMAIN_ID_SHIFT - 4) / 2) & 7ULL)
 #define VTD_MGAW    39  /* Maximum Guest Address Width */
