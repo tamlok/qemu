@@ -443,11 +443,6 @@ static inline int slpt_level_shift(int level)
     return VTD_PAGE_SHIFT_4K + (level - 1) * VTD_SL_LEVEL_BITS;
 }
 
-static inline bool slpte_present(uint64_t slpte)
-{
-    return slpte & VTD_SL_RW_MASK;
-}
-
 /* Calculate the GPA given the base address, the index in the page table and
  * the level of this page table.
  */
@@ -577,22 +572,12 @@ static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa, bool is_write,
                 return -VTD_FR_PAGING_ENTRY_INV;
             }
         }
-        if (!slpte_present(slpte)) {
-            /* FIXME: the specification seems not to state the fault reason
-             * in this case. Just return VTD_FR_RESERVED_ERR to indicate an
-             * error. It will not be reported to software.
-             */
-            VTD_DPRINTF(GENERAL, "error: level %d slpte 0x%"PRIx64
-                        " for gpa 0x%"PRIx64 " is not present",
-                        level, slpte, gpa);
-            return -VTD_FR_RESERVED_ERR;
-        } else if (!(slpte & access_right_check)) {
+        if (!(slpte & access_right_check)) {
             VTD_DPRINTF(GENERAL, "error: lack of %s permission for "
                         "gpa 0x%"PRIx64 " slpte 0x%"PRIx64,
                         (is_write ? "write" : "read"), gpa, slpte);
             return is_write ? -VTD_FR_WRITE : -VTD_FR_READ;
         }
-
         if (slpte_nonzero_rsvd(slpte, level)) {
             VTD_DPRINTF(GENERAL, "error: non-zero reserved field in second "
                         "level paging entry level %d slpte 0x%"PRIx64,
