@@ -260,12 +260,25 @@ typedef enum VTDFaultReason {
 } VTDFaultReason;
 
 
-/* Masks for Queued Invalidation Descriptor */
+/* Queued Invalidation Descriptor */
+struct VTDInvDesc {
+    uint64_t lo;
+    uint64_t hi;
+};
+typedef struct VTDInvDesc VTDInvDesc;
+
+/* Masks for struct VTDInvDesc */
 #define VTD_INV_DESC_TYPE  (0xf)
 #define VTD_INV_DESC_CC    (0x1) /* Context-cache Invalidate Descriptor */
 #define VTD_INV_DESC_IOTLB (0x2)
 #define VTD_INV_DESC_WAIT  (0x5) /* Invalidation Wait Descriptor */
 #define VTD_INV_DESC_NONE  (0)   /* Not an Invalidate Descriptor */
+
+/* Masks for Invalidation Wait Descriptor*/
+#define VTD_INV_DESC_WAIT_SW    (1ULL << 5)
+#define VTD_INV_DESC_WAIT_IF    (1ULL << 4)
+#define VTD_INV_DESC_WAIT_FN    (1ULL << 6)
+#define VTD_INV_DESC_WAIT_DATA_SHIFT (32)
 
 
 /* Pagesize of VTD paging structures, including root and context tables */
