@@ -372,6 +372,7 @@ static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
         vtd_as->bus_num = bus_num;
         vtd_as->devfn = devfn;
         vtd_as->iommu_state = s;
+        vtd_as->context_cache_entry.context_cache_gen = 0;
         memory_region_init_iommu(&vtd_as->iommu, OBJECT(s), &s->iommu_ops,
                                  "intel_iommu", UINT64_MAX);
         address_space_init(&vtd_as->as, &vtd_as->iommu, "intel_iommu");
