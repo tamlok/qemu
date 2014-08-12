@@ -163,6 +163,51 @@ static void reset_context_cache(IntelIOMMUState *s)
     s->context_cache_gen = 1;
 }
 
+static void reset_iotlb(IntelIOMMUState *s)
+{
+    if (s->iotlb) {
+        memset(s->iotlb, 0, VTD_IOTLB_SIZE * sizeof(*(s->iotlb)));
+    }
+}
+
+static VTDIOTLBEntry *lookup_iotlb(IntelIOMMUState *s, uint16_t source_id,
+                         hwaddr addr)
+{
+    uint64_t gfn = addr >> VTD_PAGE_SHIFT_4K;
+    uint64_t index = gfn & VTD_IOTLB_MASK;
+    VTDIOTLBEntry *entry = &s->iotlb[index];
+
+    if (entry->valid && (entry->gfn == gfn) &&
+        (entry->source_id == source_id)) {
+        VTD_DPRINTF(CACHE, "hit iotlb sid 0x%"PRIx16 " gpa 0x%"PRIx64
+                    " slpte 0x%"PRIx64 " did 0x%"PRIx16,
+                    source_id, addr, entry->slpte, entry->domain_id);
+        return entry;
+    } else {
+        return NULL;
+    }
+}
+
+static void update_iotlb(IntelIOMMUState *s, uint16_t source_id,
+                         uint16_t domain_id, hwaddr addr, uint64_t slpte,
+                         bool read_flags, bool write_flags)
+{
+    uint64_t gfn = addr >> VTD_PAGE_SHIFT_4K;
+    uint64_t index = gfn & VTD_IOTLB_MASK;
+    VTDIOTLBEntry *entry = &s->iotlb[index];
+
+    VTD_DPRINTF(CACHE, "update iotlb sid 0x%"PRIx16 " gpa 0x%"PRIx64
+                " slpte 0x%"PRIx64 " did 0x%"PRIx16, source_id, addr, slpte,
+                domain_id);
+    entry->gfn = gfn;
+    entry->source_id = source_id;
+    entry->domain_id = domain_id;
+    entry->slpte = slpte;
+    entry->read_flags = read_flags;
+    entry->write_flags = write_flags;
+    entry->valid = true;
+}
+
 /* Given the reg addr of both the message data and address, generate an
  * interrupt via MSI.
  */
@@ -552,7 +597,8 @@ static inline bool slpte_nonzero_rsvd(uint64_t slpte, uint32_t level)
  * @slptep and @slpte_level will not be touched if error happens.
  */
 static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa, bool is_write,
-                        uint64_t *slptep, uint32_t *slpte_level)
+                        uint64_t *slptep, uint32_t *slpte_level,
+                        bool *reads, bool *writes)
 {
     dma_addr_t addr = get_slpt_base_from_context(ce);
     uint32_t level = get_level_from_context_entry(ce);
@@ -587,6 +633,8 @@ static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa, bool is_write,
                 return -VTD_FR_PAGING_ENTRY_INV;
             }
         }
+        *reads = (*reads) && (slpte & VTD_SL_R);
+        *writes = (*writes) && (slpte & VTD_SL_W);
         if (!(slpte & access_right_check)) {
             VTD_DPRINTF(GENERAL, "error: lack of %s permission for "
                         "gpa 0x%"PRIx64 " slpte 0x%"PRIx64,
@@ -732,6 +780,9 @@ static void iommu_translate(VTDAddressSpace *vtd_as, int bus_num, int devfn,
     uint16_t source_id = make_source_id(bus_num, devfn);
     int ret_fr;
     bool is_fpd_set = false;
+    bool reads = true;
+    bool writes = true;
+    VTDIOTLBEntry *iotlb_entry;
 
     /* Check if the request is in interrupt address range */
     if (is_interrupt_addr(addr)) {
@@ -754,6 +805,16 @@ static void iommu_translate(VTDAddressSpace *vtd_as, int bus_num, int devfn,
             vtd_report_dmar_fault(s, source_id, addr, VTD_FR_READ, is_write);
             return;
         }
+    }
+
+    /* Try to fetch slpte form IOTLB */
+    iotlb_entry = lookup_iotlb(s, source_id, addr);
+    if (iotlb_entry) {
+        page_mask = VTD_PAGE_MASK_4K;
+        slpte = iotlb_entry->slpte;
+        reads = iotlb_entry->read_flags;
+        writes = iotlb_entry->write_flags;
+        goto out;
     }
 
     /* Try to fetch context-entry from cache first */
@@ -788,7 +849,7 @@ static void iommu_translate(VTDAddressSpace *vtd_as, int bus_num, int devfn,
     }
 
 
-    ret_fr = gpa_to_slpte(&ce, addr, is_write, &slpte, &level);
+    ret_fr = gpa_to_slpte(&ce, addr, is_write, &slpte, &level, &reads, &writes);
     if (ret_fr) {
         ret_fr = -ret_fr;
         if (is_fpd_set && is_qualified_fault(ret_fr)) {
@@ -800,6 +861,9 @@ static void iommu_translate(VTDAddressSpace *vtd_as, int bus_num, int devfn,
         return;
     }
 
+    update_iotlb(s, source_id, VTD_CONTEXT_ENTRY_DID(ce.hi), addr, slpte,
+                 reads, writes);
+
     if (level == VTD_SL_PT_LEVEL) {
         /* 4-KB page */
         page_mask = VTD_PAGE_MASK_4K;
@@ -810,11 +874,11 @@ static void iommu_translate(VTDAddressSpace *vtd_as, int bus_num, int devfn,
         /* 2-MB page */
         page_mask = VTD_PAGE_MASK_2M;
     }
-
+out:
     entry->iova = addr & page_mask;
     entry->translated_addr = get_slpte_addr(slpte) & page_mask;
     entry->addr_mask = ~page_mask;
-    entry->perm = slpte & VTD_SL_RW_MASK;
+    entry->perm = (writes ? 2 : 0) + (reads ? 1 : 0);
 }
 
 static void vtd_root_table_setup(IntelIOMMUState *s)
@@ -915,6 +979,44 @@ static uint64_t vtd_context_cache_invalidate(IntelIOMMUState *s, uint64_t val)
     return caig;
 }
 
+static void vtd_iotlb_global_invalidate(IntelIOMMUState *s)
+{
+    reset_iotlb(s);
+}
+
+static void vtd_iotlb_domain_invalidate(IntelIOMMUState *s, uint16_t domain_id)
+{
+    uint32_t i;
+    for (i = 0; i < VTD_IOTLB_SIZE; ++i) {
+        if (s->iotlb[i].valid && s->iotlb[i].domain_id == domain_id) {
+            VTD_DPRINTF(INV, "sid 0x%"PRIx16 " gfn 0x%"PRIx64
+                        " slpte 0x%"PRIx64, s->iotlb[i].source_id,
+                        s->iotlb[i].gfn, s->iotlb[i].slpte);
+            s->iotlb[i].valid = false;
+        }
+    }
+}
+
+static void vtd_iotlb_page_invalidate(IntelIOMMUState *s, uint16_t domain_id,
+                                      hwaddr addr, uint8_t am)
+{
+    uint64_t gfn = addr >> VTD_PAGE_SHIFT_4K;
+    uint64_t mask = ~((1 << am) - 1);
+    uint32_t i;
+
+    assert(am <= VTD_MAMV);
+    gfn = gfn & mask;
+    for (i = 0; i < VTD_IOTLB_SIZE; ++i) {
+        if (s->iotlb[i].valid && (s->iotlb[i].domain_id == domain_id) &&
+            ((s->iotlb[i].gfn & mask) == gfn)) {
+            VTD_DPRINTF(INV, "sid 0x%"PRIx16 " gfn 0x%"PRIx64
+                        " slpte 0x%"PRIx64, s->iotlb[i].source_id,
+                        s->iotlb[i].gfn, s->iotlb[i].slpte);
+            s->iotlb[i].valid = false;
+        }
+    }
+}
+
 /* Flush IOTLB
  * Returns the IOTLB Actual Invalidation Granularity.
  * @val: the content of the IOTLB_REG
@@ -923,25 +1025,44 @@ static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
 {
     uint64_t iaig;
     uint64_t type = val & VTD_TLB_FLUSH_GRANU_MASK;
+    uint16_t domain_id;
+    hwaddr addr;
+    uint8_t am;
 
     switch (type) {
     case VTD_TLB_GLOBAL_FLUSH:
-        VTD_DPRINTF(INV, "Global IOTLB flush");
+        VTD_DPRINTF(INV, "global invalidation");
         iaig = VTD_TLB_GLOBAL_FLUSH_A;
+        vtd_iotlb_global_invalidate(s);
         break;
 
     case VTD_TLB_DSI_FLUSH:
-        VTD_DPRINTF(INV, "Domain-selective IOTLB flush");
+        domain_id = VTD_TLB_DID(val);
+        VTD_DPRINTF(INV, "domain-selective invalidation domain 0x%"PRIx16,
+                    domain_id);
         iaig = VTD_TLB_DSI_FLUSH_A;
+        vtd_iotlb_domain_invalidate(s, domain_id);
         break;
 
     case VTD_TLB_PSI_FLUSH:
-        VTD_DPRINTF(INV, "Page-selective-within-domain IOTLB flush");
+        domain_id = VTD_TLB_DID(val);
+        addr = get_quad_raw(s, DMAR_IVA_REG);
+        am = VTD_IVA_AM(addr);
+        addr = VTD_IVA_ADDR(addr);
+        VTD_DPRINTF(INV, "page-selective invalidation domain 0x%"PRIx16
+                    " addr 0x%"PRIx64 " mask %"PRIu8, domain_id, addr, am);
+        if (am > VTD_MAMV) {
+            VTD_DPRINTF(GENERAL, "error: supported max address mask value is "
+                        "%"PRIu8, (uint8_t)VTD_MAMV);
+            iaig = 0;
+            break;
+        }
         iaig = VTD_TLB_PSI_FLUSH_A;
+        vtd_iotlb_page_invalidate(s, domain_id, addr, am);
         break;
 
     default:
-        VTD_DPRINTF(GENERAL, "error: wrong iotlb flush granularity");
+        VTD_DPRINTF(GENERAL, "error: invalid granularity");
         iaig = 0;
     }
 
@@ -1182,6 +1303,56 @@ static bool vtd_process_context_cache_desc(IntelIOMMUState *s,
     return true;
 }
 
+static bool vtd_process_iotlb_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
+{
+    uint16_t domain_id;
+    uint8_t am;
+    hwaddr addr;
+
+    if ((inv_desc->lo & VTD_INV_DESC_IOTLB_RSVD_LO) ||
+        (inv_desc->hi & VTD_INV_DESC_IOTLB_RSVD_HI)) {
+        VTD_DPRINTF(GENERAL, "error: non-zero reserved field in IOTLB "
+                    "Invalidate Descriptor hi 0x%"PRIx64 " lo 0x%"PRIx64,
+                    inv_desc->hi, inv_desc->lo);
+        return false;
+    }
+
+    switch (inv_desc->lo & VTD_INV_DESC_IOTLB_G) {
+    case VTD_INV_DESC_IOTLB_GLOBAL:
+        VTD_DPRINTF(INV, "global invalidation");
+        vtd_iotlb_global_invalidate(s);
+        break;
+
+    case VTD_INV_DESC_IOTLB_DOMAIN:
+        domain_id = VTD_INV_DESC_IOTLB_DID(inv_desc->lo);
+        VTD_DPRINTF(INV, "domain-selective invalidation domain 0x%"PRIx16,
+                    domain_id);
+        vtd_iotlb_domain_invalidate(s, domain_id);
+        break;
+
+    case VTD_INV_DESC_IOTLB_PAGE:
+        domain_id = VTD_INV_DESC_IOTLB_DID(inv_desc->lo);
+        addr = VTD_INV_DESC_IOTLB_ADDR(inv_desc->hi);
+        am = VTD_INV_DESC_IOTLB_AM(inv_desc->hi);
+        VTD_DPRINTF(INV, "page-selective invalidation domain 0x%"PRIx16
+                    " addr 0x%"PRIx64 " mask %"PRIu8, domain_id, addr, am);
+        if (am > VTD_MAMV) {
+            VTD_DPRINTF(GENERAL, "error: supported max address mask value is "
+                        "%"PRIu8, (uint8_t)VTD_MAMV);
+            return false;
+        }
+        vtd_iotlb_page_invalidate(s, domain_id, addr, am);
+        break;
+
+    default:
+        VTD_DPRINTF(GENERAL, "error: invalid granularity in IOTLB Invalidate "
+                    "Descriptor hi 0x%"PRIx64 " lo 0x%"PRIx64,
+                    inv_desc->hi, inv_desc->lo);
+        return false;
+    }
+    return true;
+}
+
 static inline bool vtd_process_inv_desc(IntelIOMMUState *s)
 {
     VTDInvDesc inv_desc;
@@ -1210,6 +1381,9 @@ static inline bool vtd_process_inv_desc(IntelIOMMUState *s)
     case VTD_INV_DESC_IOTLB:
         VTD_DPRINTF(INV, "IOTLB Invalidate Descriptor hi 0x%"PRIx64
                     " lo 0x%"PRIx64, inv_desc.hi, inv_desc.lo);
+        if (!vtd_process_iotlb_desc(s, &inv_desc)) {
+            return false;
+        }
         break;
 
     case VTD_INV_DESC_WAIT:
@@ -1448,6 +1622,24 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         assert(size == 4);
         set_long(s, addr, val);
         handle_iotlb_write(s);
+        break;
+
+    /* Invalidate Address Register, 64-bit */
+    case DMAR_IVA_REG:
+        VTD_DPRINTF(INV, "DMAR_IVA_REG write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        if (size == 4) {
+            set_long(s, addr, val);
+        } else {
+            set_quad(s, addr, val);
+        }
+        break;
+
+    case DMAR_IVA_REG_HI:
+        VTD_DPRINTF(INV, "DMAR_IVA_REG_HI write addr 0x%"PRIx64
+                    ", size %d, val 0x%"PRIx64, addr, size, val);
+        assert(size == 4);
+        set_long(s, addr, val);
         break;
 
     /* Fault Status Register, 32-bit */
@@ -1737,6 +1929,7 @@ static void do_vtd_init(IntelIOMMUState *s)
     s->next_frcd_reg = 0;
 
     reset_context_cache(s);
+    reset_iotlb(s);
 
     /* b.0:2 = 6: Number of domains supported: 64K using 16 bit ids
      * b.3   = 0: Advanced fault logging not supported
@@ -1753,7 +1946,7 @@ static void do_vtd_init(IntelIOMMUState *s)
      * b.55 = 0: DRD(Read Draining), draining of read requests not supported
      */
     s->cap = VTD_CAP_FRO | VTD_CAP_NFR | VTD_CAP_ND | VTD_CAP_MGAW |
-             VTD_CAP_SAGAW;
+             VTD_CAP_SAGAW | VTD_CAP_MAMV | VTD_CAP_PSI;
 
     /* b.1 = 1: QI(Queued Invalidation support) supported
      * b.2 = 0: DT(Device-TLB support) not supported
@@ -1840,6 +2033,8 @@ static void vtd_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->csrmem, OBJECT(s), &vtd_mem_ops, s,
                           "intel_iommu", DMAR_REG_SIZE);
     sysbus_init_mmio(SYS_BUS_DEVICE(s), &s->csrmem);
+    /* No corresponding free */
+    s->iotlb = g_malloc(VTD_IOTLB_SIZE * sizeof(*(s->iotlb)));
     do_vtd_init(s);
 }
 
