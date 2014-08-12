@@ -1012,6 +1012,13 @@ static bool get_inv_desc(dma_addr_t base_addr, uint32_t offset,
 
 static bool vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
 {
+    if ((inv_desc->hi & VTD_INV_DESC_WAIT_RSVD_HI) ||
+        (inv_desc->lo & VTD_INV_DESC_WAIT_RSVD_LO)) {
+        VTD_DPRINTF(GENERAL, "error: non-zero reserved field in Invalidation "
+                    "Wait Descriptor hi 0x%"PRIx64 " lo 0x%"PRIx64,
+                    inv_desc->hi, inv_desc->lo);
+        return false;
+    }
     if (inv_desc->lo & VTD_INV_DESC_WAIT_SW) {
         /* Status Write */
         uint32_t status_data = (uint32_t)(inv_desc->lo >>
