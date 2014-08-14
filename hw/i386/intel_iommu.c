@@ -30,8 +30,7 @@ enum {
     DEBUG_GENERAL, DEBUG_CSR, DEBUG_INV, DEBUG_MMU, DEBUG_FLOG,
 };
 #define VTD_DBGBIT(x)   (1 << DEBUG_##x)
-static int vtd_dbgflags = VTD_DBGBIT(GENERAL) | VTD_DBGBIT(CSR) |
-                          VTD_DBGBIT(FLOG);
+static int vtd_dbgflags = VTD_DBGBIT(GENERAL) | VTD_DBGBIT(CSR);
 
 #define VTD_DPRINTF(what, fmt, ...) do { \
     if (vtd_dbgflags & VTD_DBGBIT(what)) { \
@@ -42,36 +41,34 @@ static int vtd_dbgflags = VTD_DBGBIT(GENERAL) | VTD_DBGBIT(CSR) |
 #define VTD_DPRINTF(what, fmt, ...) do {} while (0)
 #endif
 
-static inline void define_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val,
-                               uint64_t wmask, uint64_t w1cmask)
+static void define_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val,
+                        uint64_t wmask, uint64_t w1cmask)
 {
     stq_le_p(&s->csr[addr], val);
     stq_le_p(&s->wmask[addr], wmask);
     stq_le_p(&s->w1cmask[addr], w1cmask);
 }
 
-static inline void define_quad_wo(IntelIOMMUState *s, hwaddr addr,
-                                  uint64_t mask)
+static void define_quad_wo(IntelIOMMUState *s, hwaddr addr, uint64_t mask)
 {
     stq_le_p(&s->womask[addr], mask);
 }
 
-static inline void define_long(IntelIOMMUState *s, hwaddr addr, uint32_t val,
-                               uint32_t wmask, uint32_t w1cmask)
+static void define_long(IntelIOMMUState *s, hwaddr addr, uint32_t val,
+                        uint32_t wmask, uint32_t w1cmask)
 {
     stl_le_p(&s->csr[addr], val);
     stl_le_p(&s->wmask[addr], wmask);
     stl_le_p(&s->w1cmask[addr], w1cmask);
 }
 
-static inline void define_long_wo(IntelIOMMUState *s, hwaddr addr,
-                                  uint32_t mask)
+static void define_long_wo(IntelIOMMUState *s, hwaddr addr, uint32_t mask)
 {
     stl_le_p(&s->womask[addr], mask);
 }
 
 /* "External" get/set operations */
-static inline void set_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val)
+static void set_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val)
 {
     uint64_t oldval = ldq_le_p(&s->csr[addr]);
     uint64_t wmask = ldq_le_p(&s->wmask[addr]);
@@ -80,7 +77,7 @@ static inline void set_quad(IntelIOMMUState *s, hwaddr addr, uint64_t val)
              ((oldval & ~wmask) | (val & wmask)) & ~(w1cmask & val));
 }
 
-static inline void set_long(IntelIOMMUState *s, hwaddr addr, uint32_t val)
+static void set_long(IntelIOMMUState *s, hwaddr addr, uint32_t val)
 {
     uint32_t oldval = ldl_le_p(&s->csr[addr]);
     uint32_t wmask = ldl_le_p(&s->wmask[addr]);
@@ -89,7 +86,7 @@ static inline void set_long(IntelIOMMUState *s, hwaddr addr, uint32_t val)
              ((oldval & ~wmask) | (val & wmask)) & ~(w1cmask & val));
 }
 
-static inline uint64_t get_quad(IntelIOMMUState *s, hwaddr addr)
+static uint64_t get_quad(IntelIOMMUState *s, hwaddr addr)
 {
     uint64_t val = ldq_le_p(&s->csr[addr]);
     uint64_t womask = ldq_le_p(&s->womask[addr]);
@@ -97,7 +94,7 @@ static inline uint64_t get_quad(IntelIOMMUState *s, hwaddr addr)
 }
 
 
-static inline uint32_t get_long(IntelIOMMUState *s, hwaddr addr)
+static uint32_t get_long(IntelIOMMUState *s, hwaddr addr)
 {
     uint32_t val = ldl_le_p(&s->csr[addr]);
     uint32_t womask = ldl_le_p(&s->womask[addr]);
@@ -105,31 +102,31 @@ static inline uint32_t get_long(IntelIOMMUState *s, hwaddr addr)
 }
 
 /* "Internal" get/set operations */
-static inline uint64_t get_quad_raw(IntelIOMMUState *s, hwaddr addr)
+static uint64_t get_quad_raw(IntelIOMMUState *s, hwaddr addr)
 {
     return ldq_le_p(&s->csr[addr]);
 }
 
-static inline uint32_t get_long_raw(IntelIOMMUState *s, hwaddr addr)
+static uint32_t get_long_raw(IntelIOMMUState *s, hwaddr addr)
 {
     return ldl_le_p(&s->csr[addr]);
 }
 
-static inline void set_quad_raw(IntelIOMMUState *s, hwaddr addr, uint64_t val)
+static void set_quad_raw(IntelIOMMUState *s, hwaddr addr, uint64_t val)
 {
     stq_le_p(&s->csr[addr], val);
 }
 
-static inline uint32_t set_clear_mask_long(IntelIOMMUState *s, hwaddr addr,
-                                           uint32_t clear, uint32_t mask)
+static uint32_t set_clear_mask_long(IntelIOMMUState *s, hwaddr addr,
+                                    uint32_t clear, uint32_t mask)
 {
     uint32_t new_val = (ldl_le_p(&s->csr[addr]) & ~clear) | mask;
     stl_le_p(&s->csr[addr], new_val);
     return new_val;
 }
 
-static inline uint64_t set_clear_mask_quad(IntelIOMMUState *s, hwaddr addr,
-                                           uint64_t clear, uint64_t mask)
+static uint64_t set_clear_mask_quad(IntelIOMMUState *s, hwaddr addr,
+                                    uint64_t clear, uint64_t mask)
 {
     uint64_t new_val = (ldq_le_p(&s->csr[addr]) & ~clear) | mask;
     stq_le_p(&s->csr[addr], new_val);
@@ -183,7 +180,7 @@ static void vtd_generate_fault_event(IntelIOMMUState *s, uint32_t pre_fsts)
 /* Check if the Fault (F) field of the Fault Recording Register referenced by
  * @index is Set.
  */
-static inline bool is_frcd_set(IntelIOMMUState *s, uint16_t index)
+static bool is_frcd_set(IntelIOMMUState *s, uint16_t index)
 {
     /* Each reg is 128-bit */
     hwaddr addr = DMAR_FRCD_REG_OFFSET + (((uint64_t)index) << 4);
@@ -198,7 +195,7 @@ static inline bool is_frcd_set(IntelIOMMUState *s, uint16_t index)
  * Should be called whenever change the F field of any fault recording
  * registers.
  */
-static inline void update_fsts_ppf(IntelIOMMUState *s)
+static void update_fsts_ppf(IntelIOMMUState *s)
 {
     uint32_t i;
     uint32_t ppf_mask = 0;
@@ -213,7 +210,7 @@ static inline void update_fsts_ppf(IntelIOMMUState *s)
     VTD_DPRINTF(FLOG, "set PPF of FSTS_REG to %d", ppf_mask ? 1 : 0);
 }
 
-static inline void set_frcd_and_update_ppf(IntelIOMMUState *s, uint16_t index)
+static void set_frcd_and_update_ppf(IntelIOMMUState *s, uint16_t index)
 {
     /* Each reg is 128-bit */
     hwaddr addr = DMAR_FRCD_REG_OFFSET + (((uint64_t)index) << 4);
@@ -247,7 +244,7 @@ static void record_frcd(IntelIOMMUState *s, uint16_t index, uint16_t source_id,
 }
 
 /* Try to collapse multiple pending faults from the same requester */
-static inline bool try_collapse_fault(IntelIOMMUState *s, uint16_t source_id)
+static bool try_collapse_fault(IntelIOMMUState *s, uint16_t source_id)
 {
     uint32_t i;
     uint64_t frcd_reg;
@@ -414,7 +411,7 @@ static inline bool is_last_slpte(uint64_t slpte, uint32_t level)
 }
 
 /* Get the content of a spte located in @base_addr[@index] */
-static inline uint64_t get_slpte(dma_addr_t base_addr, uint32_t index)
+static uint64_t get_slpte(dma_addr_t base_addr, uint32_t index)
 {
     uint64_t slpte;
 
@@ -473,7 +470,7 @@ static const uint64_t paging_entry_rsvd_field[] = {
     [8] = 0x880ULL | ~(VTD_HAW_MASK | VTD_SL_IGN_COM),
 };
 
-static inline bool slpte_nonzero_rsvd(uint64_t slpte, uint32_t level)
+static bool slpte_nonzero_rsvd(uint64_t slpte, uint32_t level)
 {
     if (slpte & VTD_SL_PT_PAGE_SIZE_MASK) {
         /* Maybe large page */
@@ -549,8 +546,8 @@ static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa, bool is_write,
 /* Map a device to its corresponding domain (context-entry). @ce will be set
  * to Zero if error happens while accessing the context-entry.
  */
-static inline int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
-                                       int devfn, VTDContextEntry *ce)
+static int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
+                                int devfn, VTDContextEntry *ce)
 {
     VTDRootEntry re;
     int ret_fr;
@@ -891,7 +888,7 @@ static void handle_iotlb_write(IntelIOMMUState *s)
     }
 }
 
-static inline void handle_fsts_write(IntelIOMMUState *s)
+static void handle_fsts_write(IntelIOMMUState *s)
 {
     uint32_t fsts_reg = get_long_raw(s, DMAR_FSTS_REG);
     uint32_t fectl_reg = get_long_raw(s, DMAR_FECTL_REG);
@@ -904,7 +901,7 @@ static inline void handle_fsts_write(IntelIOMMUState *s)
     }
 }
 
-static inline void handle_fectl_write(IntelIOMMUState *s)
+static void handle_fectl_write(IntelIOMMUState *s)
 {
     uint32_t fectl_reg;
     /* When software clears the IM field, check the IP field. But do we
