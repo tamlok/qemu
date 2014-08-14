@@ -223,10 +223,7 @@
 
 /* DMA Remapping Fault Conditions */
 typedef enum VTDFaultReason {
-    /* Reserved for Advanced Fault logging. We use this to represent the case
-     * with no fault event.
-     */
-    VTD_FR_RESERVED = 0,
+    VTD_FR_RESERVED = 0,       /* Reserved for Advanced Fault logging */
     VTD_FR_ROOT_ENTRY_P = 1, /* The Present(P) field of root-entry is 0 */
     VTD_FR_CONTEXT_ENTRY_P, /* The Present(P) field of context-entry is 0 */
     VTD_FR_CONTEXT_ENTRY_INV, /* Invalid programming of a context-entry */

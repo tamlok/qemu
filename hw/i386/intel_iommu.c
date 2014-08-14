@@ -350,7 +350,7 @@ static int get_root_entry(IntelIOMMUState *s, uint32_t index, VTDRootEntry *re)
     }
 
     re->val = le64_to_cpu(re->val);
-    return VTD_FR_RESERVED;
+    return 0;
 }
 
 static inline bool context_entry_present(VTDContextEntry *context)
@@ -364,8 +364,6 @@ static int get_context_entry_from_root(VTDRootEntry *root, uint32_t index,
     dma_addr_t addr;
 
     if (!root_entry_present(root)) {
-        ce->lo = 0;
-        ce->hi = 0;
         VTD_DPRINTF(GENERAL, "error: root-entry is not present");
         return -VTD_FR_ROOT_ENTRY_P;
     }
@@ -378,14 +376,12 @@ static int get_context_entry_from_root(VTDRootEntry *root, uint32_t index,
         VTD_DPRINTF(GENERAL, "error: fail to access context-entry at 0x%"PRIx64
                     " + %"PRIu32,
                     (uint64_t)(root->val & VTD_ROOT_ENTRY_CTP), index);
-        ce->lo = 0;
-        ce->hi = 0;
         return -VTD_FR_CONTEXT_TABLE_INV;
     }
 
     ce->lo = le64_to_cpu(ce->lo);
     ce->hi = le64_to_cpu(ce->hi);
-    return VTD_FR_RESERVED;
+    return 0;
 }
 
 static inline dma_addr_t get_slpt_base_from_context(VTDContextEntry *ce)
@@ -482,7 +478,6 @@ static bool slpte_nonzero_rsvd(uint64_t slpte, uint32_t level)
 
 /* Given the @gpa, get relevant @slptep. @slpte_level will be the last level
  * of the translation, can be used for deciding the size of large page.
- * @slptep and @slpte_level will not be touched if error happens.
  */
 static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa, bool is_write,
                         uint64_t *slptep, uint32_t *slpte_level)
@@ -536,16 +531,14 @@ static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa, bool is_write,
         if (is_last_slpte(slpte, level)) {
             *slptep = slpte;
             *slpte_level = level;
-            return VTD_FR_RESERVED;
+            return 0;
         }
         addr = get_slpte_addr(slpte);
         level--;
     }
 }
 
-/* Map a device to its corresponding domain (context-entry). @ce will be set
- * to Zero if error happens while accessing the context-entry.
- */
+/* Map a device to its corresponding domain (context-entry) */
 static int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
                                 int devfn, VTDContextEntry *ce)
 {
@@ -557,21 +550,15 @@ static int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
 
     ret_fr = get_root_entry(s, bus_num, &re);
     if (ret_fr) {
-        ce->hi = 0;
-        ce->lo = 0;
         return ret_fr;
     }
 
     if (!root_entry_present(&re)) {
         VTD_DPRINTF(GENERAL, "error: root-entry #%d is not present", bus_num);
-        ce->hi = 0;
-        ce->lo = 0;
         return -VTD_FR_ROOT_ENTRY_P;
     } else if (re.rsvd || (re.val & VTD_ROOT_ENTRY_RSVD)) {
         VTD_DPRINTF(GENERAL, "error: non-zero reserved field in root-entry "
                     "hi 0x%"PRIx64 " lo 0x%"PRIx64, re.rsvd, re.val);
-        ce->hi = 0;
-        ce->lo = 0;
         return -VTD_FR_ROOT_ENTRY_RSVD;
     }
 
@@ -605,8 +592,7 @@ static int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
                     ce->hi, ce->lo);
         return -VTD_FR_CONTEXT_ENTRY_INV;
     }
-
-    return VTD_FR_RESERVED;
+    return 0;
 }
 
 static inline uint16_t make_source_id(int bus_num, int devfn)
