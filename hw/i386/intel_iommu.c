@@ -454,7 +454,8 @@ static bool slpte_nonzero_rsvd(uint64_t slpte, uint32_t level)
  * of the translation, can be used for deciding the size of large page.
  */
 static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa, bool is_write,
-                        uint64_t *slptep, uint32_t *slpte_level)
+                        uint64_t *slptep, uint32_t *slpte_level,
+                        bool *reads, bool *writes)
 {
     dma_addr_t addr = get_slpt_base_from_context(ce);
     uint32_t level = get_level_from_context_entry(ce);
@@ -489,6 +490,8 @@ static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa, bool is_write,
                 return -VTD_FR_PAGING_ENTRY_INV;
             }
         }
+        *reads = (*reads) && (slpte & VTD_SL_R);
+        *writes = (*writes) && (slpte & VTD_SL_W);
         if (!(slpte & access_right_check)) {
             VTD_DPRINTF(GENERAL, "error: lack of %s permission for "
                         "gpa 0x%"PRIx64 " slpte 0x%"PRIx64,
@@ -619,6 +622,8 @@ static void iommu_translate(IntelIOMMUState *s, uint8_t bus_num, uint8_t devfn,
     uint16_t source_id = make_source_id(bus_num, devfn);
     int ret_fr;
     bool is_fpd_set = false;
+    bool reads = true;
+    bool writes = true;
 
     /* Check if the request is in interrupt address range */
     if (is_interrupt_addr(addr)) {
@@ -656,7 +661,7 @@ static void iommu_translate(IntelIOMMUState *s, uint8_t bus_num, uint8_t devfn,
         return;
     }
 
-    ret_fr = gpa_to_slpte(&ce, addr, is_write, &slpte, &level);
+    ret_fr = gpa_to_slpte(&ce, addr, is_write, &slpte, &level, &reads, &writes);
     if (ret_fr) {
         ret_fr = -ret_fr;
         if (is_fpd_set && is_qualified_fault(ret_fr)) {
@@ -671,7 +676,7 @@ static void iommu_translate(IntelIOMMUState *s, uint8_t bus_num, uint8_t devfn,
     entry->iova = addr & VTD_PAGE_MASK_4K;
     entry->translated_addr = get_slpte_addr(slpte) & VTD_PAGE_MASK_4K;
     entry->addr_mask = ~VTD_PAGE_MASK_4K;
-    entry->perm = slpte & VTD_SL_RW_MASK;
+    entry->perm = (writes ? 2 : 0) + (reads ? 1 : 0);
 }
 
 static void vtd_root_table_setup(IntelIOMMUState *s)
