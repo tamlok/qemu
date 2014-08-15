@@ -23,7 +23,6 @@
 #include "exec/address-spaces.h"
 #include "intel_iommu_internal.h"
 
-
 /*#define DEBUG_INTEL_IOMMU*/
 #ifdef DEBUG_INTEL_IOMMU
 enum {
@@ -92,7 +91,6 @@ static uint64_t get_quad(IntelIOMMUState *s, hwaddr addr)
     uint64_t womask = ldq_le_p(&s->womask[addr]);
     return val & ~womask;
 }
-
 
 static uint32_t get_long(IntelIOMMUState *s, hwaddr addr)
 {
@@ -255,7 +253,6 @@ static bool try_collapse_fault(IntelIOMMUState *s, uint16_t source_id)
         }
         addr += 16; /* 128-bit for each */
     }
-
     return false;
 }
 
@@ -309,7 +306,6 @@ static void vtd_report_dmar_fault(IntelIOMMUState *s, uint16_t source_id,
         if (s->next_frcd_reg == DMAR_FRCD_REG_NR) {
             s->next_frcd_reg = 0;
         }
-
         /* This case actually cause the PPF to be Set.
          * So generate fault event (interrupt).
          */
@@ -333,7 +329,6 @@ static int get_root_entry(IntelIOMMUState *s, uint8_t index, VTDRootEntry *re)
         re->val = 0;
         return -VTD_FR_ROOT_TABLE_INV;
     }
-
     re->val = le64_to_cpu(re->val);
     return 0;
 }
@@ -359,7 +354,6 @@ static int get_context_entry_from_root(VTDRootEntry *root, uint8_t index,
                     (uint64_t)(root->val & VTD_ROOT_ENTRY_CTP), index);
         return -VTD_FR_CONTEXT_TABLE_INV;
     }
-
     ce->lo = le64_to_cpu(ce->lo);
     ce->hi = le64_to_cpu(ce->hi);
     return 0;
@@ -400,7 +394,6 @@ static uint64_t get_slpte(dma_addr_t base_addr, uint32_t index)
         slpte = (uint64_t)-1;
         return slpte;
     }
-
     slpte = le64_to_cpu(slpte);
     return slpte;
 }
@@ -558,7 +551,6 @@ static int dev_to_context_entry(IntelIOMMUState *s, uint8_t bus_num,
                     "hi 0x%"PRIx64 " lo 0x%"PRIx64, ce->hi, ce->lo);
         return -VTD_FR_CONTEXT_ENTRY_RSVD;
     }
-
     /* Check if the programming of context-entry is valid */
     if (!is_level_supported(s, get_level_from_context_entry(ce))) {
         VTD_DPRINTF(GENERAL, "error: unsupported Address Width value in "
@@ -722,7 +714,6 @@ static uint64_t vtd_context_cache_invalidate(IntelIOMMUState *s, uint64_t val)
                     "error: wrong context-cache invalidation granularity");
         caig = 0;
     }
-
     return caig;
 }
 
@@ -755,7 +746,6 @@ static uint64_t vtd_iotlb_flush(IntelIOMMUState *s, uint64_t val)
         VTD_DPRINTF(GENERAL, "error: wrong iotlb flush granularity");
         iaig = 0;
     }
-
     return iaig;
 }
 
@@ -815,7 +805,6 @@ static void handle_ccmd_write(IntelIOMMUState *s)
     /* Context-cache invalidation request */
     if (val & VTD_CCMD_ICC) {
         ret = vtd_context_cache_invalidate(s, val);
-
         /* Invalidation completed. Change something to show */
         set_clear_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_ICC, 0ULL);
         ret = set_clear_mask_quad(s, DMAR_CCMD_REG, VTD_CCMD_CAIG_MASK, ret);
@@ -832,7 +821,6 @@ static void handle_iotlb_write(IntelIOMMUState *s)
     /* IOTLB invalidation request */
     if (val & VTD_TLB_IVT) {
         ret = vtd_iotlb_flush(s, val);
-
         /* Invalidation completed. Change something to show */
         set_clear_mask_quad(s, DMAR_IOTLB_REG, VTD_TLB_IVT, 0ULL);
         ret = set_clear_mask_quad(s, DMAR_IOTLB_REG,
@@ -904,7 +892,6 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
             val = get_quad(s, addr);
         }
     }
-
     VTD_DPRINTF(CSR, "addr 0x%"PRIx64 " size %d val 0x%"PRIx64,
                 addr, size, val);
     return val;
@@ -950,7 +937,6 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         set_long(s, addr, val);
         handle_ccmd_write(s);
         break;
-
 
     /* IOTLB Invalidation Register, 64-bit */
     case DMAR_IOTLB_REG:
@@ -1022,7 +1008,6 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         set_long(s, addr, val);
         break;
 
-
     /* Root Table Address Register, 64-bit */
     case DMAR_RTADDR_REG:
         VTD_DPRINTF(CSR, "DMAR_RTADDR_REG write addr 0x%"PRIx64
@@ -1089,7 +1074,6 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
             set_quad(s, addr, val);
         }
     }
-
 }
 
 static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr,

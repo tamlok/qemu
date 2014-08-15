@@ -29,20 +29,18 @@
      OBJECT_CHECK(IntelIOMMUState, (obj), TYPE_INTEL_IOMMU_DEVICE)
 
 /* DMAR Hardware Unit Definition address (IOMMU unit) */
-#define Q35_HOST_BRIDGE_IOMMU_ADDR 0xfed90000ULL
+#define Q35_HOST_BRIDGE_IOMMU_ADDR  0xfed90000ULL
 
-#define VTD_PCI_BUS_MAX 256
-#define VTD_PCI_SLOT_MAX 32
-#define VTD_PCI_FUNC_MAX 8
-#define VTD_PCI_DEVFN_MAX 256
+#define VTD_PCI_BUS_MAX             256
+#define VTD_PCI_SLOT_MAX            32
+#define VTD_PCI_FUNC_MAX            8
+#define VTD_PCI_DEVFN_MAX           256
 #define VTD_PCI_SLOT(devfn)         (((devfn) >> 3) & 0x1f)
 #define VTD_PCI_FUNC(devfn)         ((devfn) & 0x07)
 
-#define DMAR_REG_SIZE   0x230
-
-/* FIXME: do not know how to decide the haw */
-#define VTD_HOST_ADDRESS_WIDTH  39
-#define VTD_HAW_MASK    ((1ULL << VTD_HOST_ADDRESS_WIDTH) - 1)
+#define DMAR_REG_SIZE               0x230
+#define VTD_HOST_ADDRESS_WIDTH      39
+#define VTD_HAW_MASK                ((1ULL << VTD_HOST_ADDRESS_WIDTH) - 1)
 
 typedef struct IntelIOMMUState IntelIOMMUState;
 typedef struct VTDAddressSpace VTDAddressSpace;
@@ -62,27 +60,27 @@ struct IntelIOMMUState {
     uint8_t csr[DMAR_REG_SIZE];     /* register values */
     uint8_t wmask[DMAR_REG_SIZE];   /* R/W bytes */
     uint8_t w1cmask[DMAR_REG_SIZE]; /* RW1C(Write 1 to Clear) bytes */
-    uint8_t womask[DMAR_REG_SIZE]; /* WO (write only - read returns 0) */
+    uint8_t womask[DMAR_REG_SIZE];  /* WO (write only - read returns 0) */
     uint32_t version;
 
-    dma_addr_t root;        /* Current root table pointer */
-    bool root_extended;     /* Type of root table (extended or not) */
-    bool dmar_enabled;      /* Set if DMA remapping is enabled */
+    dma_addr_t root;                /* Current root table pointer */
+    bool root_extended;             /* Type of root table (extended or not) */
+    bool dmar_enabled;              /* Set if DMA remapping is enabled */
 
-    uint16_t iq_head;       /* Current invalidation queue head */
-    uint16_t iq_tail;       /* Current invalidation queue tail */
-    dma_addr_t iq;          /* Current invalidation queue (IQ) pointer */
-    uint16_t iq_size;       /* IQ Size in number of entries */
-    bool qi_enabled;        /* Set if the QI is enabled */
-    uint8_t iq_last_desc_type; /* The type of last completed descriptor */
+    uint16_t iq_head;               /* Current invalidation queue head */
+    uint16_t iq_tail;               /* Current invalidation queue tail */
+    dma_addr_t iq;                  /* Current invalidation queue pointer */
+    uint16_t iq_size;               /* IQ Size in number of entries */
+    bool qi_enabled;                /* Set if the QI is enabled */
+    uint8_t iq_last_desc_type;      /* The type of last completed descriptor */
 
     /* The index of the Fault Recording Register to be used next.
      * Wraps around from N-1 to 0, where N is the number of FRCD_REG.
      */
     uint16_t next_frcd_reg;
 
-    uint64_t cap;           /* The value of Capability Register */
-    uint64_t ecap;          /* The value of Extended Capability Register */
+    uint64_t cap;                   /* The value of capability reg */
+    uint64_t ecap;                  /* The value of extended capability reg */
 
     MemoryRegionIOMMUOps iommu_ops;
     VTDAddressSpace **address_spaces[VTD_PCI_BUS_MAX];
