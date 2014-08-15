@@ -335,7 +335,6 @@ static void vtd_generate_completion_event(IntelIOMMUState *s)
                     "new invalidation event is not generated");
         return;
     }
-
     set_clear_mask_long(s, DMAR_ICS_REG, 0, VTD_ICS_IWC);
     set_clear_mask_long(s, DMAR_IECTL_REG, 0, VTD_IECTL_IP);
     if (get_long_raw(s, DMAR_IECTL_REG) & VTD_IECTL_IM) {
@@ -347,7 +346,6 @@ static void vtd_generate_completion_event(IntelIOMMUState *s)
         vtd_generate_interrupt(s, DMAR_IEADDR_REG, DMAR_IEDATA_REG);
         set_clear_mask_long(s, DMAR_IECTL_REG, VTD_IECTL_IP, 0);
     }
-
 }
 
 static inline bool root_entry_present(VTDRootEntry *root)
@@ -805,8 +803,8 @@ static inline bool queued_inv_disable_check(IntelIOMMUState *s)
 static void handle_gcmd_qie(IntelIOMMUState *s, bool en)
 {
     uint64_t iqa_val = get_quad_raw(s, DMAR_IQA_REG);
-    VTD_DPRINTF(INV, "Queued Invalidation Enable %s", (en ? "on" : "off"));
 
+    VTD_DPRINTF(INV, "Queued Invalidation Enable %s", (en ? "on" : "off"));
     if (en) {
         if (queued_inv_enable_check(s)) {
             s->iq = iqa_val & VTD_IQA_IQA_MASK;
@@ -947,7 +945,6 @@ static bool get_inv_desc(dma_addr_t base_addr, uint32_t offset,
 
         return false;
     }
-
     inv_desc->lo = le64_to_cpu(inv_desc->lo);
     inv_desc->hi = le64_to_cpu(inv_desc->hi);
     return true;
@@ -991,13 +988,12 @@ static bool vtd_process_wait_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
     return true;
 }
 
-static inline bool vtd_process_inv_desc(IntelIOMMUState *s)
+static bool vtd_process_inv_desc(IntelIOMMUState *s)
 {
     VTDInvDesc inv_desc;
     uint8_t desc_type;
 
     VTD_DPRINTF(INV, "iq head %"PRIu16, s->iq_head);
-
     if (!get_inv_desc(s->iq, s->iq_head, &inv_desc)) {
         s->iq_last_desc_type = VTD_INV_DESC_NONE;
         return false;
@@ -1063,13 +1059,12 @@ static void vtd_fetch_inv_desc(IntelIOMMUState *s)
 }
 
 /* Handle write to Invalidation Queue Tail Register */
-static inline void handle_iqt_write(IntelIOMMUState *s)
+static void handle_iqt_write(IntelIOMMUState *s)
 {
     uint64_t val = get_quad_raw(s, DMAR_IQT_REG);
 
     s->iq_tail = VTD_IQT_QT(val);
     VTD_DPRINTF(INV, "set iq tail %"PRIu16, s->iq_tail);
-
     if (s->qi_enabled && !(get_long_raw(s, DMAR_FSTS_REG) & VTD_FSTS_IQE)) {
         /* Process Invalidation Queue here */
         vtd_fetch_inv_desc(s);
@@ -1108,7 +1103,7 @@ static void handle_fectl_write(IntelIOMMUState *s)
     }
 }
 
-static inline void handle_ics_write(IntelIOMMUState *s)
+static void handle_ics_write(IntelIOMMUState *s)
 {
     uint32_t ics_reg = get_long_raw(s, DMAR_ICS_REG);
     uint32_t iectl_reg = get_long_raw(s, DMAR_IECTL_REG);
@@ -1120,7 +1115,7 @@ static inline void handle_ics_write(IntelIOMMUState *s)
     }
 }
 
-static inline void handle_iectl_write(IntelIOMMUState *s)
+static void handle_iectl_write(IntelIOMMUState *s)
 {
     uint32_t iectl_reg;
     /* FIXME: when software clears the IM field, check the IP field. But do we
@@ -1397,7 +1392,6 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
         set_long(s, addr, val);
         break;
 
-
     /* Fault Recording Registers, 128-bit */
     case DMAR_FRCD_REG_0_0:
         VTD_DPRINTF(FLOG, "DMAR_FRCD_REG_0_0 write addr 0x%"PRIx64
@@ -1559,20 +1553,13 @@ static void do_vtd_init(IntelIOMMUState *s)
      */
     define_long(s, DMAR_PMEN_REG, 0, 0, 0);
 
-    /* Bits 18:4 (0x7fff0) is RO, rest is RsvdZ */
     define_quad(s, DMAR_IQH_REG, 0, 0, 0);
     define_quad(s, DMAR_IQT_REG, 0, 0x7fff0ULL, 0);
     define_quad(s, DMAR_IQA_REG, 0, 0xfffffffffffff007ULL, 0);
-
-    /* Bit 0 is RW1CS - rest is RsvdZ */
     define_long(s, DMAR_ICS_REG, 0, 0, 0x1UL);
-
-    /* b.31 is RW, b.30 RO, rest: RsvdZ */
     define_long(s, DMAR_IECTL_REG, 0x80000000UL, 0x80000000UL, 0);
-
     define_long(s, DMAR_IEDATA_REG, 0, 0xffffffffUL, 0);
     define_long(s, DMAR_IEADDR_REG, 0, 0xfffffffcUL, 0);
-
     /* Treadted as RsvdZ when EIM in ECAP_REG is not supported */
     define_long(s, DMAR_IEUADDR_REG, 0, 0, 0);
 
