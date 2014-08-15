@@ -158,7 +158,6 @@ static void vtd_generate_interrupt(IntelIOMMUState *s, hwaddr mesg_addr_reg,
  */
 static void vtd_generate_fault_event(IntelIOMMUState *s, uint32_t pre_fsts)
 {
-    /* Check if there are any previously reported interrupt conditions */
     if (pre_fsts & VTD_FSTS_PPF || pre_fsts & VTD_FSTS_PFO ||
         pre_fsts & VTD_FSTS_IQE) {
         VTD_DPRINTF(FLOG, "there are previous interrupt conditions "
@@ -168,10 +167,8 @@ static void vtd_generate_fault_event(IntelIOMMUState *s, uint32_t pre_fsts)
     }
     set_clear_mask_long(s, DMAR_FECTL_REG, 0, VTD_FECTL_IP);
     if (get_long_raw(s, DMAR_FECTL_REG) & VTD_FECTL_IM) {
-        /* Interrupt Mask */
         VTD_DPRINTF(FLOG, "Interrupt Mask set, fault event is not generated");
     } else {
-        /* generate interrupt */
         vtd_generate_interrupt(s, DMAR_FEADDR_REG, DMAR_FEDATA_REG);
         set_clear_mask_long(s, DMAR_FECTL_REG, VTD_FECTL_IP, 0);
     }
@@ -236,7 +233,6 @@ static void record_frcd(IntelIOMMUState *s, uint16_t index, uint16_t source_id,
     if (!is_write) {
         hi |= VTD_FRCD_T;
     }
-
     set_quad_raw(s, frcd_reg_addr, lo);
     set_quad_raw(s, frcd_reg_addr + 8, hi);
     VTD_DPRINTF(FLOG, "record to FRCD_REG #%"PRIu16 ": hi 0x%"PRIx64
@@ -276,25 +272,18 @@ static void vtd_report_dmar_fault(IntelIOMMUState *s, uint16_t source_id,
         /* This is not a normal fault reason case. Drop it. */
         return;
     }
-
     VTD_DPRINTF(FLOG, "sid 0x%"PRIx16 ", fault %d, addr 0x%"PRIx64
                 ", is_write %d", source_id, fault, addr, is_write);
-
-    /* Check PFO field in FSTS_REG */
     if (fsts_reg & VTD_FSTS_PFO) {
         VTD_DPRINTF(FLOG, "new fault is not recorded due to "
                     "Primary Fault Overflow");
         return;
     }
-
-    /* Compression of multiple faults from the same requester */
     if (try_collapse_fault(s, source_id)) {
         VTD_DPRINTF(FLOG, "new fault is not recorded due to "
                     "compression of faults");
         return;
     }
-
-    /* Check next_frcd_reg to see whether it is overflow now */
     if (is_frcd_set(s, s->next_frcd_reg)) {
         VTD_DPRINTF(FLOG, "Primary Fault Overflow and "
                     "new fault is not recorded, set PFO field");
@@ -305,7 +294,6 @@ static void vtd_report_dmar_fault(IntelIOMMUState *s, uint16_t source_id,
     record_frcd(s, s->next_frcd_reg, source_id, addr, fault, is_write);
 
     if (fsts_reg & VTD_FSTS_PPF) {
-        /* There are already one or more pending faults */
         VTD_DPRINTF(FLOG, "there are pending faults already, "
                     "fault event is not generated");
         set_frcd_and_update_ppf(s, s->next_frcd_reg);
@@ -869,7 +857,7 @@ static void handle_fsts_write(IntelIOMMUState *s)
 static void handle_fectl_write(IntelIOMMUState *s)
 {
     uint32_t fectl_reg;
-    /* When software clears the IM field, check the IP field. But do we
+    /* FIXME: when software clears the IM field, check the IP field. But do we
      * need to compare the old value and the new value to conclude that
      * software clears the IM field? Or just check if the IM field is zero?
      */
@@ -1162,7 +1150,7 @@ static Property iommu_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
-/* Do the real initialization. It will also be called when reset, so pay
+/* Do the initialization. It will also be called when reset, so pay
  * attention when adding new initialization stuff.
  */
 static void do_vtd_init(IntelIOMMUState *s)
@@ -1183,40 +1171,17 @@ static void do_vtd_init(IntelIOMMUState *s)
     s->qi_enabled = false;
     s->iq_last_desc_type = VTD_INV_DESC_NONE;
     s->next_frcd_reg = 0;
-
-    /* b.0:2 = 6: Number of domains supported: 64K using 16 bit ids
-     * b.3   = 0: Advanced fault logging not supported
-     * b.4   = 0: Required write buffer flushing not supported
-     * b.5   = 0: Protected low memory region not supported
-     * b.6   = 0: Protected high memory region not supported
-     * b.8:12 = 2: SAGAW(Supported Adjusted Guest Address Widths), 39-bit,
-     *             3-level page-table
-     * b.16:21 = 38: MGAW(Maximum Guest Address Width) = 39
-     * b.22 = 0: ZLR(Zero Length Read) zero length DMA read requests
-     *           to write-only pages not supported
-     * b.24:33 = 34: FRO(Fault-recording Register offset)
-     * b.54 = 0: DWD(Write Draining), draining of write requests not supported
-     * b.55 = 0: DRD(Read Draining), draining of read requests not supported
-     */
     s->cap = VTD_CAP_FRO | VTD_CAP_NFR | VTD_CAP_ND | VTD_CAP_MGAW |
              VTD_CAP_SAGAW;
-
-    /* b.1 = 0: QI(Queued Invalidation support) not supported
-     * b.2 = 0: DT(Device-TLB support) not supported
-     * b.3 = 0: IR(Interrupt Remapping support) not supported
-     * b.4 = 0: EIM(Extended Interrupt Mode) not supported
-     * b.8:17 = 15: IRO(IOTLB Register Offset)
-     * b.20:23 = 0: MHMV(Maximum Handle Mask Value) not valid
-     */
     s->ecap = VTD_ECAP_IRO;
 
     /* Define registers with default values and bit semantics */
-    define_long(s, DMAR_VER_REG, 0x10UL, 0, 0);  /* set MAX = 1, RO */
+    define_long(s, DMAR_VER_REG, 0x10UL, 0, 0);
     define_quad(s, DMAR_CAP_REG, s->cap, 0, 0);
     define_quad(s, DMAR_ECAP_REG, s->ecap, 0, 0);
     define_long(s, DMAR_GCMD_REG, 0, 0xff800000UL, 0);
     define_long_wo(s, DMAR_GCMD_REG, 0xff800000UL);
-    define_long(s, DMAR_GSTS_REG, 0, 0, 0); /* All bits RO, default 0 */
+    define_long(s, DMAR_GSTS_REG, 0, 0, 0);
     define_quad(s, DMAR_RTADDR_REG, 0, 0xfffffffffffff000ULL, 0);
     define_quad(s, DMAR_CCMD_REG, 0, 0xe0000003ffffffffULL, 0);
     define_quad_wo(s, DMAR_CCMD_REG, 0x3ffff0000ULL);
@@ -1224,8 +1189,8 @@ static void do_vtd_init(IntelIOMMUState *s)
     /* Advanced Fault Logging not supported */
     define_long(s, DMAR_FSTS_REG, 0, 0, 0x11UL);
     define_long(s, DMAR_FECTL_REG, 0x80000000UL, 0x80000000UL, 0);
-    define_long(s, DMAR_FEDATA_REG, 0, 0x0000ffffUL, 0); /* 15:0 RW */
-    define_long(s, DMAR_FEADDR_REG, 0, 0xfffffffcUL, 0); /* 31:2 RW */
+    define_long(s, DMAR_FEDATA_REG, 0, 0x0000ffffUL, 0);
+    define_long(s, DMAR_FEADDR_REG, 0, 0xfffffffcUL, 0);
 
     /* Treated as RsvdZ when EIM in ECAP_REG is not supported
      * define_long(s, DMAR_FEUADDR_REG, 0, 0xffffffffUL, 0);
@@ -1248,8 +1213,8 @@ static void do_vtd_init(IntelIOMMUState *s)
     define_quad(s, DMAR_FRCD_REG_0_2, 0, 0, 0x8000000000000000ULL);
 }
 
-/* Reset function of QOM
- * Should not reset address_spaces when reset
+/* Should not reset address_spaces when reset because devices will still use
+ * the address space they got at first (won't ask the bus again).
  */
 static void vtd_reset(DeviceState *dev)
 {
@@ -1259,7 +1224,6 @@ static void vtd_reset(DeviceState *dev)
     do_vtd_init(s);
 }
 
-/* Initialization function of QOM */
 static void vtd_realize(DeviceState *dev, Error **errp)
 {
     IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
