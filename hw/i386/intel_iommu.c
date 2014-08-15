@@ -636,7 +636,6 @@ static void iommu_translate(IntelIOMMUState *s, uint8_t bus_num, uint8_t devfn,
     VTDContextEntry ce;
     uint64_t slpte;
     uint32_t level;
-    uint64_t page_mask;
     uint16_t source_id = make_source_id(bus_num, devfn);
     int ret_fr;
     bool is_fpd_set = false;
@@ -689,20 +688,9 @@ static void iommu_translate(IntelIOMMUState *s, uint8_t bus_num, uint8_t devfn,
         return;
     }
 
-    if (level == VTD_SL_PT_LEVEL) {
-        /* 4-KB page */
-        page_mask = VTD_PAGE_MASK_4K;
-    } else if (level == VTD_SL_PDP_LEVEL) {
-        /* 1-GB page */
-        page_mask = VTD_PAGE_MASK_1G;
-    } else {
-        /* 2-MB page */
-        page_mask = VTD_PAGE_MASK_2M;
-    }
-
-    entry->iova = addr & page_mask;
-    entry->translated_addr = get_slpte_addr(slpte) & page_mask;
-    entry->addr_mask = ~page_mask;
+    entry->iova = addr & VTD_PAGE_MASK_4K;
+    entry->translated_addr = get_slpte_addr(slpte) & VTD_PAGE_MASK_4K;
+    entry->addr_mask = ~VTD_PAGE_MASK_4K;
     entry->perm = slpte & VTD_SL_RW_MASK;
 }
 
