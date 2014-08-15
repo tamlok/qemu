@@ -351,7 +351,6 @@ static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
 {
     IntelIOMMUState *s = opaque;
     VTDAddressSpace **pvtd_as;
-    VTDAddressSpace *vtd_as;
     int bus_num = pci_bus_num(bus);
 
     assert(0 <= bus_num && bus_num <= VTD_PCI_BUS_MAX);
@@ -360,25 +359,21 @@ static AddressSpace *q35_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
     pvtd_as = s->address_spaces[bus_num];
     if (!pvtd_as) {
         /* No corresponding free() */
-        pvtd_as = g_malloc0(sizeof(VTDAddressSpace *) *
-                            VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX);
+        pvtd_as = g_malloc0(sizeof(VTDAddressSpace *) * VTD_PCI_DEVFN_MAX);
         s->address_spaces[bus_num] = pvtd_as;
     }
+    if (!pvtd_as[devfn]) {
+        pvtd_as[devfn] = g_malloc0(sizeof(VTDAddressSpace));
 
-    vtd_as = *(pvtd_as + devfn);
-    if (!vtd_as) {
-        vtd_as = g_malloc0(sizeof(*vtd_as));
-        *(pvtd_as + devfn) = vtd_as;
-
-        vtd_as->bus_num = (uint8_t)bus_num;
-        vtd_as->devfn = (uint8_t)devfn;
-        vtd_as->iommu_state = s;
-        memory_region_init_iommu(&vtd_as->iommu, OBJECT(s), &s->iommu_ops,
-                                 "intel_iommu", UINT64_MAX);
-        address_space_init(&vtd_as->as, &vtd_as->iommu, "intel_iommu");
+        pvtd_as[devfn]->bus_num = (uint8_t)bus_num;
+        pvtd_as[devfn]->devfn = (uint8_t)devfn;
+        pvtd_as[devfn]->iommu_state = s;
+        memory_region_init_iommu(&pvtd_as[devfn]->iommu, OBJECT(s),
+                                 &s->iommu_ops, "intel_iommu", UINT64_MAX);
+        address_space_init(&pvtd_as[devfn]->as,
+                           &pvtd_as[devfn]->iommu, "intel_iommu");
     }
-
-    return &vtd_as->as;
+    return &pvtd_as[devfn]->as;
 }
 
 static void mch_init_dmar(MCHPCIState *mch)
