@@ -324,55 +324,26 @@ struct AcpiTableDmar {
 typedef struct AcpiTableDmar AcpiTableDmar;
 
 /* Masks for Flags field above */
-#define ACPI_DMAR_INTR_REMAP    (1)
-#define ACPI_DMAR_X2APIC_OPT_OUT    (2)
-
-/*
- * DMAR sub-structures (Follow DMA Remapping table)
- */
-#define ACPI_DMAR_SUB_HEADER_DEF /* Common ACPI DMAR sub-structure header */\
-    uint16_t type;  \
-    uint16_t length;
+#define ACPI_DMAR_INTR_REMAP        1
+#define ACPI_DMAR_X2APIC_OPT_OUT    (1 << 1)
 
 /* Values for sub-structure type for DMAR */
 enum {
-    ACPI_DMAR_TYPE_HARDWARE_UNIT = 0,   /* DRHD */
-    ACPI_DMAR_TYPE_RESERVED_MEMORY = 1, /* RMRR */
-    ACPI_DMAR_TYPE_ATSR = 2,    /* ATSR */
+    ACPI_DMAR_TYPE_HARDWARE_UNIT = 0,       /* DRHD */
+    ACPI_DMAR_TYPE_RESERVED_MEMORY = 1,     /* RMRR */
+    ACPI_DMAR_TYPE_ATSR = 2,                /* ATSR */
     ACPI_DMAR_TYPE_HARDWARE_AFFINITY = 3,   /* RHSR */
-    ACPI_DMAR_TYPE_ANDD = 4,    /* ANDD */
-    ACPI_DMAR_TYPE_RESERVED = 5 /* Reserved for furture use */
+    ACPI_DMAR_TYPE_ANDD = 4,                /* ANDD */
+    ACPI_DMAR_TYPE_RESERVED = 5             /* Reserved for furture use */
 };
 
 /*
- * Sub-structures for DMAR, correspond to Type in ACPI_DMAR_SUB_HEADER_DEF
+ * Sub-structures for DMAR
  */
-
-/* DMAR Device Scope structures */
-struct AcpiDmarDeviceScope {
-    uint8_t type;
-    uint8_t length;
-    uint16_t reserved;
-    uint8_t enumeration_id;
-    uint8_t start_bus_number;
-    uint8_t path[0];
-} QEMU_PACKED;
-typedef struct AcpiDmarDeviceScope AcpiDmarDeviceScope;
-
-/* Values for type in struct AcpiDmarDeviceScope */
-enum {
-    ACPI_DMAR_SCOPE_TYPE_NOT_USED = 0,
-    ACPI_DMAR_SCOPE_TYPE_ENDPOINT = 1,
-    ACPI_DMAR_SCOPE_TYPE_BRIDGE = 2,
-    ACPI_DMAR_SCOPE_TYPE_IOAPIC = 3,
-    ACPI_DMAR_SCOPE_TYPE_HPET = 4,
-    ACPI_DMAR_SCOPE_TYPE_ACPI = 5,
-    ACPI_DMAR_SCOPE_TYPE_RESERVED = 6 /* Reserved for future use */
-};
-
-/* 0: Hardware Unit Definition */
+/* Type 0: Hardware Unit Definition */
 struct AcpiDmarHardwareUnit {
-    ACPI_DMAR_SUB_HEADER_DEF
+    uint16_t type;
+    uint16_t length;
     uint8_t flags;
     uint8_t reserved;
     uint16_t pci_segment;   /* The PCI Segment associated with this unit */
@@ -381,7 +352,6 @@ struct AcpiDmarHardwareUnit {
 typedef struct AcpiDmarHardwareUnit AcpiDmarHardwareUnit;
 
 /* Masks for Flags field above */
-#define ACPI_DMAR_INCLUDE_PCI_ALL (1)
-
+#define ACPI_DMAR_INCLUDE_PCI_ALL   1
 
 #endif

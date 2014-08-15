@@ -1374,7 +1374,6 @@ build_dmar_q35(GArray *table_data, GArray *linker)
                  "DMAR", table_data->len - dmar_start, 1);
 }
 
-
 static void
 build_dsdt(GArray *table_data, GArray *linker, AcpiMiscInfo *misc)
 {
@@ -1505,7 +1504,6 @@ static bool acpi_has_iommu(void)
                                            &ambiguous);
     return intel_iommu && !ambiguous;
 }
-
 
 static
 void acpi_build(PcGuestInfo *guest_info, AcpiBuildTables *tables)
