@@ -1139,14 +1139,8 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr,
 }
 
 static const VMStateDescription vtd_vmstate = {
-    .name = "iommu_intel",
-    .version_id = 1,
-    .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields = (VMStateField[]) {
-        VMSTATE_UINT8_ARRAY(csr, IntelIOMMUState, DMAR_REG_SIZE),
-        VMSTATE_END_OF_LIST()
-    }
+    .name = "iommu-intel",
+    .unmigratable = 1,
 };
 
 static const MemoryRegionOps vtd_mem_ops = {
