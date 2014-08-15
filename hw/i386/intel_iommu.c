@@ -334,17 +334,14 @@ static inline bool root_entry_present(VTDRootEntry *root)
     return root->val & VTD_ROOT_ENTRY_P;
 }
 
-static int get_root_entry(IntelIOMMUState *s, uint32_t index, VTDRootEntry *re)
+static int get_root_entry(IntelIOMMUState *s, uint8_t index, VTDRootEntry *re)
 {
     dma_addr_t addr;
 
-    assert(index < VTD_ROOT_ENTRY_NR);
-
     addr = s->root + index * sizeof(*re);
-
     if (dma_memory_read(&address_space_memory, addr, re, sizeof(*re))) {
         VTD_DPRINTF(GENERAL, "error: fail to access root-entry at 0x%"PRIx64
-                    " + %"PRIu32, s->root, index);
+                    " + %"PRIu8, s->root, index);
         re->val = 0;
         return -VTD_FR_ROOT_TABLE_INV;
     }
@@ -358,7 +355,7 @@ static inline bool context_entry_present(VTDContextEntry *context)
     return context->lo & VTD_CONTEXT_ENTRY_P;
 }
 
-static int get_context_entry_from_root(VTDRootEntry *root, uint32_t index,
+static int get_context_entry_from_root(VTDRootEntry *root, uint8_t index,
                                        VTDContextEntry *ce)
 {
     dma_addr_t addr;
@@ -367,14 +364,10 @@ static int get_context_entry_from_root(VTDRootEntry *root, uint32_t index,
         VTD_DPRINTF(GENERAL, "error: root-entry is not present");
         return -VTD_FR_ROOT_ENTRY_P;
     }
-
-    assert(index < VTD_CONTEXT_ENTRY_NR);
-
     addr = (root->val & VTD_ROOT_ENTRY_CTP) + index * sizeof(*ce);
-
     if (dma_memory_read(&address_space_memory, addr, ce, sizeof(*ce))) {
         VTD_DPRINTF(GENERAL, "error: fail to access context-entry at 0x%"PRIx64
-                    " + %"PRIu32,
+                    " + %"PRIu8,
                     (uint64_t)(root->val & VTD_ROOT_ENTRY_CTP), index);
         return -VTD_FR_CONTEXT_TABLE_INV;
     }
@@ -539,14 +532,11 @@ static int gpa_to_slpte(VTDContextEntry *ce, uint64_t gpa, bool is_write,
 }
 
 /* Map a device to its corresponding domain (context-entry) */
-static int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
-                                int devfn, VTDContextEntry *ce)
+static int dev_to_context_entry(IntelIOMMUState *s, uint8_t bus_num,
+                                uint8_t devfn, VTDContextEntry *ce)
 {
     VTDRootEntry re;
     int ret_fr;
-
-    assert(0 <= bus_num && bus_num < VTD_PCI_BUS_MAX);
-    assert(0 <= devfn && devfn < VTD_PCI_SLOT_MAX * VTD_PCI_FUNC_MAX);
 
     ret_fr = get_root_entry(s, bus_num, &re);
     if (ret_fr) {
@@ -554,7 +544,8 @@ static int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
     }
 
     if (!root_entry_present(&re)) {
-        VTD_DPRINTF(GENERAL, "error: root-entry #%d is not present", bus_num);
+        VTD_DPRINTF(GENERAL, "error: root-entry #%"PRIu8 " is not present",
+                    bus_num);
         return -VTD_FR_ROOT_ENTRY_P;
     } else if (re.rsvd || (re.val & VTD_ROOT_ENTRY_RSVD)) {
         VTD_DPRINTF(GENERAL, "error: non-zero reserved field in root-entry "
@@ -569,8 +560,8 @@ static int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
 
     if (!context_entry_present(ce)) {
         VTD_DPRINTF(GENERAL,
-                    "error: context-entry #%d(bus #%d) is not present", devfn,
-                    bus_num);
+                    "error: context-entry #%"PRIu8 "(bus #%"PRIu8 ") "
+                    "is not present", devfn, bus_num);
         return -VTD_FR_CONTEXT_ENTRY_P;
     } else if ((ce->hi & VTD_CONTEXT_ENTRY_RSVD_HI) ||
                (ce->lo & VTD_CONTEXT_ENTRY_RSVD_LO)) {
@@ -595,7 +586,7 @@ static int dev_to_context_entry(IntelIOMMUState *s, int bus_num,
     return 0;
 }
 
-static inline uint16_t make_source_id(int bus_num, int devfn)
+static inline uint16_t make_source_id(uint8_t bus_num, uint8_t devfn)
 {
     return ((bus_num & 0xffUL) << 8) | (devfn & 0xffUL);
 }
@@ -639,7 +630,7 @@ static inline bool is_interrupt_addr(hwaddr addr)
  * @is_write: The access is a write operation
  * @entry: IOMMUTLBEntry that contain the addr to be translated and result
  */
-static void iommu_translate(IntelIOMMUState *s, int bus_num, int devfn,
+static void iommu_translate(IntelIOMMUState *s, uint8_t bus_num, uint8_t devfn,
                             hwaddr addr, bool is_write, IOMMUTLBEntry *entry)
 {
     VTDContextEntry ce;
@@ -915,8 +906,6 @@ static uint64_t vtd_mem_read(void *opaque, hwaddr addr, unsigned size)
         return (uint64_t)-1;
     }
 
-    assert(size == 4 || size == 8);
-
     switch (addr) {
     /* Root Table Address Register, 64-bit */
     case DMAR_RTADDR_REG:
@@ -956,8 +945,6 @@ static void vtd_mem_write(void *opaque, hwaddr addr,
                     (uint64_t)DMAR_REG_SIZE, addr, size);
         return;
     }
-
-    assert(size == 4 || size == 8);
 
     switch (addr) {
     /* Global Command Register, 32-bit */
@@ -1134,8 +1121,8 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr,
 {
     VTDAddressSpace *vtd_as = container_of(iommu, VTDAddressSpace, iommu);
     IntelIOMMUState *s = vtd_as->iommu_state;
-    int bus_num = vtd_as->bus_num;
-    int devfn = vtd_as->devfn;
+    uint8_t bus_num = vtd_as->bus_num;
+    uint8_t devfn = vtd_as->devfn;
     IOMMUTLBEntry ret = {
         .target_as = &address_space_memory,
         .iova = addr,
@@ -1156,8 +1143,9 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr,
     iommu_translate(s, bus_num, devfn, addr, is_write, &ret);
 
     VTD_DPRINTF(MMU,
-                "bus %d slot %d func %d devfn %d gpa %"PRIx64 " hpa %"PRIx64,
-                bus_num, VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
+                "bus %"PRIu8 " slot %"PRIu8 " func %"PRIu8 " devfn %"PRIu8
+                " gpa 0x%"PRIx64 " hpa 0x%"PRIx64, bus_num,
+                VTD_PCI_SLOT(devfn), VTD_PCI_FUNC(devfn), devfn, addr,
                 ret.translated_addr);
     return ret;
 }

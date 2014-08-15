@@ -34,6 +34,7 @@
 #define VTD_PCI_BUS_MAX 256
 #define VTD_PCI_SLOT_MAX 32
 #define VTD_PCI_FUNC_MAX 8
+#define VTD_PCI_DEVFN_MAX 256
 #define VTD_PCI_SLOT(devfn)         (((devfn) >> 3) & 0x1f)
 #define VTD_PCI_FUNC(devfn)         ((devfn) & 0x07)
 
@@ -47,8 +48,8 @@ typedef struct IntelIOMMUState IntelIOMMUState;
 typedef struct VTDAddressSpace VTDAddressSpace;
 
 struct VTDAddressSpace {
-    int bus_num;
-    int devfn;
+    uint8_t bus_num;
+    uint8_t devfn;
     AddressSpace as;
     MemoryRegion iommu;
     IntelIOMMUState *iommu_state;
